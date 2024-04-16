@@ -2,7 +2,7 @@
 
 ![workflow](https://github.com/tomsilver/toms-utils/actions/workflows/ci.yml/badge.svg)
 
-A basic starter for Python packages with GitHub continuous integration.
+Miscellaneous Python utilities.
 
 ## Requirements
 
