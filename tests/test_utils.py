@@ -2,11 +2,11 @@
 
 from dataclasses import dataclass
 
-from tomsutils.utils import cached_property_by_dataclass_values
+from tomsutils.utils import cached_property_until_field_change
 
 
-def test_cached_property_by_dataclass_values():
-    """Tests for cached_property_by_dataclass_values()."""
+def test_cached_property_until_field_change():
+    """Tests for cached_property_until_field_change()."""
 
     num_times_invoked = 0
 
@@ -17,7 +17,7 @@ def test_cached_property_by_dataclass_values():
         x: int
         y: int
 
-        @cached_property_by_dataclass_values
+        @cached_property_until_field_change
         def xy(self) -> int:
             """Returns x * y."""
             nonlocal num_times_invoked
@@ -39,3 +39,9 @@ def test_cached_property_by_dataclass_values():
     assert num_times_invoked == 3
     assert a.xy == -10
     assert num_times_invoked == 3
+    a.x = 3
+    a.y = 4
+    assert a.xy == 12
+    assert num_times_invoked == 4
+    assert a.xy == 12
+    assert num_times_invoked == 4
