@@ -2,6 +2,7 @@
 
 from dataclasses import fields
 from functools import cached_property
+from types import GenericAlias
 
 _NOT_FOUND = object()
 
@@ -35,3 +36,5 @@ class cached_property_until_field_change(cached_property):
         cache[field_key] = cur_field_vals
         cache[prop_key] = new_prop_val
         return new_prop_val
+
+    __class_getitem__ = classmethod(GenericAlias)  # type: ignore
