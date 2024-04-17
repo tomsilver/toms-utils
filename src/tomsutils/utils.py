@@ -2,14 +2,21 @@
 
 from dataclasses import fields
 from functools import cached_property
-from types import GenericAlias
 
 _NOT_FOUND = object()
 
 
-class cached_property_until_field_change(cached_property):
+class _DISABLED_cached_property_until_field_change(cached_property):
     """Decorator that caches a property in a dataclass until any field is
-    changed."""
+    changed.
+
+    This descriptor is currently disabled because it does not play well
+    with pylint. For example, see
+    https://stackoverflow.com/questions/74523859/
+
+    It is left here in case future versions of python / pylint have better
+    support for custom property-like descriptors.
+    """
 
     def __get__(self, instance, owner=None):
         if self.attrname is None:
@@ -36,5 +43,3 @@ class cached_property_until_field_change(cached_property):
         cache[field_key] = cur_field_vals
         cache[prop_key] = new_prop_val
         return new_prop_val
-
-    __class_getitem__ = classmethod(GenericAlias)  # type: ignore
