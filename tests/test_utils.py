@@ -2,11 +2,12 @@
 
 from dataclasses import dataclass
 
-from tomsutils.utils import cached_property_until_field_change
+from tomsutils.utils import _DISABLED_cached_property_until_field_change
 
 
 def test_cached_property_until_field_change():
     """Tests for cached_property_until_field_change()."""
+    # pylint: disable=comparison-with-callable
 
     num_times_invoked = 0
 
@@ -17,7 +18,7 @@ def test_cached_property_until_field_change():
         x: int
         y: int
 
-        @cached_property_until_field_change
+        @_DISABLED_cached_property_until_field_change
         def xy(self) -> int:
             """Returns x * y."""
             nonlocal num_times_invoked
