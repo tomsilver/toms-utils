@@ -25,7 +25,10 @@ develop = [
 ]
 
 [tool.setuptools.packages.find]
-exclude = ["tests*"]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tomsutils = ["py.typed"]
 
 [tool.black]
 line-length = 88
