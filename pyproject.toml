@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tomsutils"
 version = "0.1.0"
-description = "A basic starter for Python packages."
+description = "Miscellaneous Python utilities."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -42,6 +42,7 @@ split_on_trailing_comma = true
 strict_equality = true
 disallow_untyped_calls = true
 warn_unreachable = true
+check_untyped_defs = true
 exclude = ["venv/*"]
 follow_imports = "skip"
 
