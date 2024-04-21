@@ -50,11 +50,7 @@ class _DISABLED_cached_property_until_field_change(cached_property):
         return new_prop_val
 
 
-def fig2data(fig: plt.Figure, dpi: int) -> Image:
+def fig2data(fig: plt.Figure) -> Image:
     """Convert matplotlib figure into Image."""
-    fig.set_dpi(dpi)
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).copy()
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
-    data[..., [0, 1, 2, 3]] = data[..., [1, 2, 3, 0]]
-    return data
+    return np.array(fig.canvas.renderer.buffer_rgba())
