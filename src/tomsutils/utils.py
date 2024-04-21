@@ -3,6 +3,11 @@
 from dataclasses import fields
 from functools import cached_property
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+from tomsutils.structs import Image
+
 _NOT_FOUND = object()
 
 
@@ -43,3 +48,13 @@ class _DISABLED_cached_property_until_field_change(cached_property):
         cache[field_key] = cur_field_vals
         cache[prop_key] = new_prop_val
         return new_prop_val
+
+
+def fig2data(fig: plt.Figure, dpi: int) -> Image:
+    """Convert matplotlib figure into Image."""
+    fig.set_dpi(dpi)
+    fig.canvas.draw()
+    data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).copy()
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    data[..., [0, 1, 2, 3]] = data[..., [1, 2, 3, 0]]
+    return data
