@@ -54,3 +54,8 @@ def fig2data(fig: plt.Figure) -> Image:
     """Convert matplotlib figure into Image."""
     fig.canvas.draw()
     return np.array(fig.canvas.renderer.buffer_rgba())
+
+
+def wrap_angle(angle: float) -> float:
+    """Wrap an angle in radians to [-pi, pi]."""
+    return np.arctan2(np.sin(angle), np.cos(angle))
