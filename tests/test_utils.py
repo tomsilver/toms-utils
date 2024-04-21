@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from tomsutils.utils import _DISABLED_cached_property_until_field_change
+import numpy as np
+
+from tomsutils.utils import _DISABLED_cached_property_until_field_change, wrap_angle
 
 
 def test_cached_property_until_field_change():
@@ -46,3 +48,15 @@ def test_cached_property_until_field_change():
     assert num_times_invoked == 4
     assert a.xy == 12
     assert num_times_invoked == 4
+
+
+def test_wrap_angle():
+    """Tests for wrap_angle()."""
+    assert np.isclose(wrap_angle(0.0), 0.0)
+    assert np.isclose(wrap_angle(np.pi / 2), np.pi / 2)
+    assert np.isclose(wrap_angle(-np.pi / 2), -np.pi / 2)
+    assert np.isclose(wrap_angle(np.pi), np.pi)
+    assert np.isclose(wrap_angle(-np.pi), -np.pi)
+    assert np.isclose(wrap_angle(2 * np.pi), 0.0)
+    assert np.isclose(wrap_angle(3 * np.pi / 2), -np.pi / 2)
+    assert np.isclose(wrap_angle(5 * np.pi / 2), np.pi / 2)
