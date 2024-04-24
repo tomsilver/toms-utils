@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import functools
-from typing import Callable, Generic, Iterator, List, Optional, TypeVar
+from typing import Callable, Generic, Iterable, List, Optional, TypeVar
 
 import numpy as np
 
@@ -16,7 +16,7 @@ class RRT(Generic[_RRTState]):
     def __init__(
         self,
         sample_fn: Callable[[_RRTState], _RRTState],
-        extend_fn: Callable[[_RRTState, _RRTState], Iterator[_RRTState]],
+        extend_fn: Callable[[_RRTState, _RRTState], Iterable[_RRTState]],
         collision_fn: Callable[[_RRTState], bool],
         distance_fn: Callable[[_RRTState, _RRTState], float],
         rng: np.random.Generator,
