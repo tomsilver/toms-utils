@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from tomsutils.utils import _DISABLED_cached_property_until_field_change, wrap_angle
+from tomsutils.utils import (
+    _DISABLED_cached_property_until_field_change,
+    get_signed_angle_distance,
+    wrap_angle,
+)
 
 
 def test_cached_property_until_field_change():
@@ -60,3 +64,12 @@ def test_wrap_angle():
     assert np.isclose(wrap_angle(2 * np.pi), 0.0)
     assert np.isclose(wrap_angle(3 * np.pi / 2), -np.pi / 2)
     assert np.isclose(wrap_angle(5 * np.pi / 2), np.pi / 2)
+
+
+def test_get_signed_angle_distance():
+    """Tests for get_signed_angle_distance()."""
+    assert np.isclose(get_signed_angle_distance(0, 0), 0)
+    assert np.isclose(get_signed_angle_distance(np.pi / 2, 0), np.pi / 2)
+    assert np.isclose(get_signed_angle_distance(0, np.pi / 2), -np.pi / 2)
+    assert np.isclose(get_signed_angle_distance(0, -np.pi / 2), np.pi / 2)
+    assert np.isclose(get_signed_angle_distance(-np.pi / 2, 0), -np.pi / 2)
