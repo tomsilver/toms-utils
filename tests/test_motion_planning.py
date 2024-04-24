@@ -1,14 +1,16 @@
 """Tests for motion_planning.py."""
 
-import pytest
-from tomsutils.motion_planning import BiRRT
 import numpy as np
+import pytest
+
+from tomsutils.motion_planning import BiRRT
+
 
 def test_motion_planning():
     """Basic assertion test for BiRRT."""
     # Create dummy functions to pass into BiRRT.
     dummy_sample_fn = lambda x: x
-    dummy_extend_fn = lambda x, y: [x, y]
+    dummy_extend_fn = lambda x, y: iter([x, y])
     dummy_collision_fn = lambda x: False
     dummy_distance_fn = lambda x, y: 0.0
 
