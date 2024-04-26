@@ -8,12 +8,14 @@ from typing import List, Optional
 
 
 def run_pddl_planner(
-    domain_str: str, problem_str: str, planner: str = "fastdownward"
+    domain_str: str, problem_str: str, planner: str = "fd-sat"
 ) -> Optional[List[str]]:
     """Run a PDDL planner and return a list of ground operators, or None if no
     plan is found."""
-    if planner == "fastdownward":
-        return run_fastdownward_planning(domain_str, problem_str)
+    if planner == "fd-sat":
+        return run_fastdownward_planning(domain_str, problem_str, alias="lama-first")
+    if planner == "fd-opt":
+        return run_fastdownward_planning(domain_str, problem_str, alias="seq-opt-lmcut")
     raise NotImplementedError(f"Planner {planner} not implemented.")
 
 
