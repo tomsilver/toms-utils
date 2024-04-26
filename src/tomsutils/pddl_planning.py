@@ -22,7 +22,6 @@ def run_fastdownward_planning(
     problem_str: str,
     alias: Optional[str] = "lama-first",
     search: Optional[str] = None,
-    timeout: float = 100.0,
 ) -> Optional[List[str]]:
     """Find a plan with fast downward.
 
@@ -62,10 +61,8 @@ def run_fastdownward_planning(
         search_flag = ""
     fd_exec_path = os.environ["FD_EXEC_PATH"]
     exec_str = os.path.join(fd_exec_path, "fast-downward.py")
-    int_timeout = int(timeout)
     cmd_str = (
         f'"{exec_str}" {alias_flag} '
-        f"--overall-time-limit {int_timeout} "
         f"--sas-file {sas_file} "
         f'"{domain_file}" "{problem_file}" '
         f"{search_flag}"
