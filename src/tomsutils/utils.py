@@ -1,8 +1,12 @@
 """Utilities."""
 
+import os
 from dataclasses import fields
 from functools import cached_property
+from pathlib import Path
+from typing import Collection, Tuple
 
+import graphviz
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -70,3 +74,20 @@ def get_signed_angle_distance(target: float, source: float) -> float:
     assert -np.pi <= target <= np.pi
     a = target - source
     return (a + np.pi) % (2 * np.pi) - np.pi
+
+
+def draw_dag(edges: Collection[Tuple[str, str]], outfile: Path) -> None:
+    """Draw a network diagram to visualize the relationship between modules."""
+    if not outfile.parent.exists():
+        os.makedirs(outfile.parent)
+    intermediate_dot_file = outfile.parent / outfile.stem
+    assert not intermediate_dot_file.exists()
+    dot = graphviz.Digraph(format=outfile.suffix[1:])
+    nodes = {e[0] for e in edges} | {e[1] for e in edges}
+    for node in nodes:
+        dot.node(node)
+    for node1, node2 in edges:
+        dot.edge(node1, node2)
+    dot.render(outfile.stem, directory=outfile.parent)
+    os.remove(intermediate_dot_file)
+    print(f"Wrote out to {outfile}")

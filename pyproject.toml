@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
    "matplotlib",
    "numpy",
+   "graphviz",
 ]
 
 [project.optional-dependencies]
@@ -52,5 +53,6 @@ follow_imports = "skip"
 [[tool.mypy.overrides]]
 module = [
     "matplotlib.*",
+    "graphviz.*",
 ]
 ignore_missing_imports = true
