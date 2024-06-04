@@ -12,6 +12,7 @@ dependencies = [
    "matplotlib",
    "numpy",
    "graphviz",
+   "pyperplan",
 ]
 
 [project.optional-dependencies]
@@ -54,5 +55,6 @@ follow_imports = "skip"
 module = [
     "matplotlib.*",
     "graphviz.*",
+    "pyperplan.*",
 ]
 ignore_missing_imports = true
