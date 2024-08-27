@@ -42,7 +42,7 @@ class RRT(Generic[_RRTState]):
         """
         if self._collision_fn(pt1) or self._collision_fn(pt2):
             return None
-        direct_path = self._try_direct_path(pt1, pt2)
+        direct_path = self.try_direct_path(pt1, pt2)
         if direct_path is not None:
             return direct_path
         for _ in range(self._num_attempts):
@@ -68,7 +68,7 @@ class RRT(Generic[_RRTState]):
         """
         if self._collision_fn(start):
             return None
-        direct_path = self._try_direct_path(start, goal_sampler())
+        direct_path = self.try_direct_path(start, goal_sampler())
         if direct_path is not None:
             return direct_path
         for _ in range(self._num_attempts):
@@ -79,9 +79,11 @@ class RRT(Generic[_RRTState]):
                 return self._smooth_path(path)
         return None
 
-    def _try_direct_path(
+    def try_direct_path(
         self, pt1: _RRTState, pt2: _RRTState
     ) -> Optional[List[_RRTState]]:
+        """Attempt to plan a direct path from pt1 to pt2, returning None if
+        collision-free path can be found."""
         path = [pt1]
         for newpt in self._extend_fn(pt1, pt2):
             if self._collision_fn(newpt):
