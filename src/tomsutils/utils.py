@@ -57,7 +57,7 @@ class _DISABLED_cached_property_until_field_change(cached_property):
 def fig2data(fig: plt.Figure) -> Image:
     """Convert matplotlib figure into Image."""
     fig.canvas.draw()
-    return np.array(fig.canvas.renderer.buffer_rgba())
+    return np.array(fig.canvas.renderer.buffer_rgba())  # type: ignore
 
 
 def wrap_angle(angle: float) -> float:
