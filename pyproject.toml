@@ -13,6 +13,7 @@ dependencies = [
    "numpy",
    "graphviz",
    "pyperplan",
+   "gymnasium",
 ]
 
 [project.optional-dependencies]
