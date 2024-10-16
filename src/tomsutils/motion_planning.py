@@ -71,8 +71,8 @@ class RRT(Generic[_RRTState]):
             return None
         if goal_sampler:
             direct_path = self.try_direct_path(start, goal_sampler())
-        if direct_path is not None:
-            return direct_path
+            if direct_path is not None:
+                return direct_path
         for _ in range(self._num_attempts):
             path = self._rrt_connect(
                 start, goal_sampler, goal_fn, sample_goal_eps=sample_goal_eps
