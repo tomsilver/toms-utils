@@ -27,4 +27,4 @@ def test_motion_planning():
 
     # Test that query_to_goal_fn for BiRRT raises a NotImplementedError
     with pytest.raises(NotImplementedError):
-        birrt.query_to_goal_fn(0, lambda: 1, lambda x: False)
+        birrt.query_to_goal_fn(0, lambda x: False, lambda: 1)
