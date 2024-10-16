@@ -56,8 +56,8 @@ class RRT(Generic[_RRTState]):
     def query_to_goal_fn(
         self,
         start: _RRTState,
-        goal_sampler: Callable[[], _RRTState],
         goal_fn: Callable[[_RRTState], bool],
+        goal_sampler: Callable[[], _RRTState] | None = None,
         sample_goal_eps: float = 0.0,
     ) -> Optional[List[_RRTState]]:
         """Query the RRT, to get a collision-free path from start to a point
@@ -66,11 +66,13 @@ class RRT(Generic[_RRTState]):
 
         If none is found, returns None.
         """
+        assert sample_goal_eps == 0.0 or goal_sampler is not None
         if self._collision_fn(start):
             return None
-        direct_path = self.try_direct_path(start, goal_sampler())
-        if direct_path is not None:
-            return direct_path
+        if goal_sampler:
+            direct_path = self.try_direct_path(start, goal_sampler())
+            if direct_path is not None:
+                return direct_path
         for _ in range(self._num_attempts):
             path = self._rrt_connect(
                 start, goal_sampler, goal_fn, sample_goal_eps=sample_goal_eps
@@ -94,8 +96,8 @@ class RRT(Generic[_RRTState]):
     def _rrt_connect(
         self,
         pt1: _RRTState,
-        goal_sampler: Callable[[], _RRTState],
-        goal_fn: Optional[Callable[[_RRTState], bool]] = None,
+        goal_sampler: Callable[[], _RRTState] | None = None,
+        goal_fn: Callable[[_RRTState], bool] | None = None,
         sample_goal_eps: float = 0.0,
     ) -> Optional[List[_RRTState]]:
         root = _RRTNode(pt1)
@@ -105,7 +107,11 @@ class RRT(Generic[_RRTState]):
             # Sample the goal with a small probability, otherwise randomly
             # choose a point.
             sample_goal = self._rng.random() < sample_goal_eps
-            samp = goal_sampler() if sample_goal else self._sample_fn(pt1)
+            if sample_goal:
+                assert goal_sampler is not None
+                samp = goal_sampler()
+            else:
+                samp = self._sample_fn(pt1)
             min_key = functools.partial(self._get_pt_dist_to_node, samp)
             nearest = min(nodes, key=min_key)
             reached_goal = False
@@ -148,8 +154,8 @@ class BiRRT(RRT[_RRTState]):
     def query_to_goal_fn(
         self,
         start: _RRTState,
-        goal_sampler: Callable[[], _RRTState],
         goal_fn: Callable[[_RRTState], bool],
+        goal_sampler: Callable[[], _RRTState] | None = None,
         sample_goal_eps: float = 0.0,
     ) -> Optional[List[_RRTState]]:
         raise NotImplementedError("Can't query to goal function using BiRRT")
@@ -157,11 +163,12 @@ class BiRRT(RRT[_RRTState]):
     def _rrt_connect(
         self,
         pt1: _RRTState,
-        goal_sampler: Callable[[], _RRTState],
-        goal_fn: Optional[Callable[[_RRTState], bool]] = None,
+        goal_sampler: Callable[[], _RRTState] | None = None,
+        goal_fn: Callable[[_RRTState], bool] | None = None,
         sample_goal_eps: float = 0.0,
     ) -> Optional[List[_RRTState]]:
         # goal_fn and sample_goal_eps are unused
+        assert goal_sampler is not None
         pt2 = goal_sampler()
         root1, root2 = _RRTNode(pt1), _RRTNode(pt2)
         nodes1, nodes2 = [root1], [root2]
