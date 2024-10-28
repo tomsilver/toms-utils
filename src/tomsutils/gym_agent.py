@@ -1,7 +1,7 @@
 """A basic agent interface compatible with gym envs."""
 
 import abc
-from typing import Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 
@@ -16,6 +16,7 @@ class Agent(Generic[_ObsType, _ActType]):
         self._rng = np.random.default_rng(seed)
         self._last_observation: _ObsType | None = None
         self._last_action: _ActType | None = None
+        self._last_info: dict[str, Any] | None = None
         self._timestep: int = 0
         self._train_or_eval = "eval"
 
@@ -30,15 +31,18 @@ class Agent(Generic[_ObsType, _ActType]):
         next_obs: _ObsType,
         reward: float,
         done: bool,
+        info: dict[str, Any],
     ) -> None:
         """Update any internal models based on the observed transition."""
 
     def reset(
         self,
         obs: _ObsType,
+        info: dict[str, Any],
     ) -> None:
         """Start a new episode."""
         self._last_observation = obs
+        self._last_info = info
         self._timestep = 0
 
     def step(self) -> _ActType:
@@ -47,15 +51,18 @@ class Agent(Generic[_ObsType, _ActType]):
         self._timestep += 1
         return self._last_action
 
-    def update(self, obs: _ObsType, reward: float, done: bool) -> None:
+    def update(
+        self, obs: _ObsType, reward: float, done: bool, info: dict[str, Any]
+    ) -> None:
         """Record the reward and next observation following an action."""
         assert self._last_observation is not None
         assert self._last_action is not None
         if self._train_or_eval == "train":
             self._learn_from_transition(
-                self._last_observation, self._last_action, obs, reward, done
+                self._last_observation, self._last_action, obs, reward, done, info
             )
         self._last_observation = obs
+        self._last_info = info
 
     def seed(self, seed: int) -> None:
         """Reset the random number generator."""
