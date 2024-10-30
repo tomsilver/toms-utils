@@ -45,7 +45,6 @@ class PretrainedLargeModel(abc.ABC):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
         """This is the main method that subclasses must implement.
@@ -61,7 +60,6 @@ class PretrainedLargeModel(abc.ABC):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
         """Sample one or more completions from a prompt.
@@ -77,10 +75,10 @@ class PretrainedLargeModel(abc.ABC):
         os.makedirs(self._cache_dir, exist_ok=True)
         model_id = self.get_id()
         prompt_id = hash(prompt)
-        config_id = f"{temperature}_{seed}_{num_completions}_{stop_token}"
+        config_id = f"{temperature}_{seed}_{num_completions}"
         # If the temperature is 0, the seed does not matter.
         if temperature == 0.0:
-            config_id = f"most_likely_{num_completions}_{stop_token}"
+            config_id = f"most_likely_{num_completions}"
         cache_foldername = f"{model_id}_{config_id}_{prompt_id}"
         if imgs is not None:
             # We also need to hash all the images in the prompt.
@@ -105,7 +103,7 @@ class PretrainedLargeModel(abc.ABC):
             logging.debug(f"Querying model {model_id} with new prompt.")
             # Query the model.
             completions = self._sample_completions(
-                prompt, imgs, temperature, seed, stop_token, num_completions
+                prompt, imgs, temperature, seed, num_completions
             )
             # Cache the completion.
             cache_str = prompt + _CACHE_SEP + _CACHE_SEP.join(completions)
@@ -139,12 +137,11 @@ class VisionLanguageModel(PretrainedLargeModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
         assert imgs is not None
         return super().sample_completions(
-            prompt, imgs, temperature, seed, stop_token, num_completions
+            prompt, imgs, temperature, seed, num_completions
         )
 
 
@@ -157,12 +154,11 @@ class LargeLanguageModel(PretrainedLargeModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
         assert imgs is None
         return super().sample_completions(
-            prompt, imgs, temperature, seed, stop_token, num_completions
+            prompt, imgs, temperature, seed, num_completions
         )
 
 
@@ -253,10 +249,9 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
-        del imgs, seed, stop_token  # unused
+        del imgs, seed  # unused
         messages = [{"role": "user", "content": prompt, "type": "text"}]
         responses = [
             self.call_openai_api(
@@ -287,10 +282,9 @@ class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
-        del seed, stop_token  # unused
+        del seed  # unused
         assert imgs is None
         generation_config = genai.types.GenerationConfig(  # pylint:disable=no-member
             candidate_count=num_completions, temperature=temperature
@@ -325,10 +319,9 @@ class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
-        del seed, stop_token  # unused
+        del seed  # unused
         assert imgs is not None
         generation_config = genai.types.GenerationConfig(  # pylint:disable=no-member
             candidate_count=num_completions, temperature=temperature
@@ -405,11 +398,10 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
-        stop_token: str | None = None,
         num_completions: int = 1,
     ) -> list[str]:
         """Query the model and get responses."""
-        del seed, stop_token  # unused.
+        del seed  # unused.
         if imgs is None:
             raise ValueError("images cannot be None")
         messages = self.prepare_vision_messages(

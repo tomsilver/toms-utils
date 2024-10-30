@@ -22,16 +22,11 @@ class _DummyLLM(LargeLanguageModel):
     def get_id(self) -> str:
         return "dummy"
 
-    def _sample_completions(
-        self, prompt, imgs, temperature, seed, stop_token=None, num_completions=1
-    ):
+    def _sample_completions(self, prompt, imgs, temperature, seed, num_completions=1):
         del imgs  # unused.
         completions = []
         for _ in range(num_completions):
-            completion = (
-                f"Prompt: {prompt}. Seed: {seed}. "
-                f"Temp: {temperature:.1f}. Stop: {stop_token}."
-            )
+            completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
         return completions
 
@@ -41,16 +36,11 @@ class _DummyVLM(VisionLanguageModel):
     def get_id(self) -> str:
         return "dummy"
 
-    def _sample_completions(
-        self, prompt, imgs, temperature, seed, stop_token=None, num_completions=1
-    ):
+    def _sample_completions(self, prompt, imgs, temperature, seed, num_completions=1):
         del imgs  # unused.
         completions = []
         for _ in range(num_completions):
-            completion = (
-                f"Prompt: {prompt}. Seed: {seed}. "
-                f"Temp: {temperature:.1f}. Stop: {stop_token}."
-            )
+            completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
         return completions
 
@@ -61,19 +51,15 @@ def test_large_language_model():
     # Query a dummy LLM.
     llm = _DummyLLM(Path(cache_dir.name))
     assert llm.get_id() == "dummy"
-    completions = llm.sample_completions(
-        "Hello!", None, 0.5, 123, stop_token="#stop", num_completions=3
-    )
-    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5. Stop: #stop."
+    completions = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
+    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5."
     assert completions == [expected_completion] * 3
     # Query it again, covering the case where we load from disk.
-    completions = llm.sample_completions(
-        "Hello!", None, 0.5, 123, stop_token="#stop", num_completions=3
-    )
+    completions = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
     assert completions == [expected_completion] * 3
     # Query with temperature 0.
     completions = llm.sample_completions("Hello!", None, 0.0, 123, num_completions=3)
-    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.0. Stop: None."
+    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.0."
     assert completions == [expected_completion] * 3
     # Clean up the cache dir.
     cache_dir.cleanup()
@@ -94,9 +80,9 @@ def test_vision_language_model():
     assert vlm.get_id() == "dummy"
     dummy_img = Image.new("RGB", (100, 100))
     completions = vlm.sample_completions(
-        "Hello!", [dummy_img], 0.5, 123, stop_token="#stop", num_completions=1
+        "Hello!", [dummy_img], 0.5, 123, num_completions=1
     )
-    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5. Stop: #stop."
+    expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5."
     assert completions == [expected_completion] * 1
     # Clean up the cache dir.
     cache_dir.cleanup()
