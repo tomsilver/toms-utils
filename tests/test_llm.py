@@ -129,7 +129,7 @@ def test_openai_llm():
 def test_gemini_vlm():
     """Tests for GoogleGeminiVLM()."""
     cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-    if "GOOGLE_API_KEY" not in os.environ:  # pragma: no cover
+    if "GOOGLE_API_KEY" not in os.environ:
         os.environ["GOOGLE_API_KEY"] = "dummy API key"
     # Create an OpenAILLM with the curie model.
     vlm = GoogleGeminiVLM("gemini-pro-vision", Path(cache_dir.name))
@@ -139,7 +139,7 @@ def test_gemini_vlm():
 def test_gemini_llm():
     """Tests for GoogleGeminiLLM()."""
     cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-    if "GOOGLE_API_KEY" not in os.environ:  # pragma: no cover
+    if "GOOGLE_API_KEY" not in os.environ:
         os.environ["GOOGLE_API_KEY"] = "dummy API key"
     # Create an OpenAILLM with the curie model.
     vlm = GoogleGeminiLLM("gemini-1.5-pro", Path(cache_dir.name))
@@ -149,7 +149,7 @@ def test_gemini_llm():
 def test_openai_vlm():
     """Tests for GoogleGeminiVLM()."""
     cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-    if "OPENAI_API_KEY" not in os.environ:  # pragma: no cover
+    if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "dummy API key"
     # Create an OpenAILLM with the curie model.
     vlm = OpenAIVLM("gpt-4-turbo", Path(cache_dir.name))
@@ -159,7 +159,8 @@ def test_openai_vlm():
     assert len(vision_messages) == 1
     assert vision_messages[0]["content"][1]["type"] == "image_url"  # type: ignore
     # NOTE: Uncomment below lines for actual test.
-    # images = [Image.open("tests/datasets/test_vlm_predicate_img.jpg")]
+    # test_img_filepath = Path(__file__).parent / "test_vlm_predicate_img.jpg"
+    # images = [Image.open(test_img_filepath)]
     # prompt = """
     #     Describe the object relationships between the objects and containers.
     #     You can use following predicate-style descriptions:
