@@ -14,6 +14,10 @@ dependencies = [
    "graphviz",
    "pyperplan",
    "gymnasium",
+   "ImageHash",
+   "google-generativeai",
+   "tenacity",
+   "openai",
 ]
 
 [project.optional-dependencies]
@@ -56,5 +60,6 @@ module = [
     "matplotlib.*",
     "graphviz.*",
     "pyperplan.*",
+    "google.*",
 ]
 ignore_missing_imports = true
