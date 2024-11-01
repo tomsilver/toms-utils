@@ -253,12 +253,15 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
         seed: int,
         num_completions: int = 1,
     ) -> list[str]:
-        del imgs, seed  # unused
+        del imgs  # unused
         messages = [{"role": "user", "content": prompt, "type": "text"}]
         responses = [
             self.call_openai_api(
-                messages, model=self._model_name, seed=seed, max_tokens=self._max_tokens,
-                  temperature=temperature
+                messages,
+                model=self._model_name,
+                seed=seed,
+                max_tokens=self._max_tokens,
+                temperature=temperature,
             )
             for _ in range(num_completions)
         ]
