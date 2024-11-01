@@ -14,6 +14,8 @@ import openai
 import PIL.Image
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
+from tomsutils.utils import consistent_hash
+
 # This is a special string that we assume will never appear in a prompt, and
 # which we use to separate prompt and completion in the cache. The reason to
 # do it this way, rather than saving the prompt and responses separately,
@@ -74,7 +76,7 @@ class PretrainedLargeModel(abc.ABC):
         assert _CACHE_SEP not in prompt
         os.makedirs(self._cache_dir, exist_ok=True)
         model_id = self.get_id()
-        prompt_id = hash(prompt)
+        prompt_id = consistent_hash(prompt)
         config_id = f"{temperature}_{seed}_{num_completions}"
         # If the temperature is 0, the seed does not matter.
         if temperature == 0.0:
@@ -91,7 +93,7 @@ class PretrainedLargeModel(abc.ABC):
             # name length is 255 characters. To shorten this foldername more, we
             # can hash this string into a shorter string. For example, look at
             # https://stackoverflow.com/questions/57263436/hash-like-string-shortener-with-decoder  # pylint:disable=line-too-long
-            imgs_id = hash("".join(img_hash_list))
+            imgs_id = consistent_hash("".join(img_hash_list))
             cache_foldername += f"{imgs_id}"
         cache_folderpath = self._cache_dir / cache_foldername
         os.makedirs(cache_folderpath, exist_ok=True)
