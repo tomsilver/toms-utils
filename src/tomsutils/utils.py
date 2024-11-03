@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import textwrap
 from dataclasses import fields
 from functools import cached_property
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any, Collection, Tuple
 import graphviz
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image as PILImage
+from PIL import ImageDraw, ImageFont
 
 from tomsutils.structs import Image
 
@@ -103,3 +106,55 @@ def consistent_hash(obj: Any) -> int:
     # Mimic Python's built-in hash() behavior by returning a 64-bit signed int.
     # This makes it comparable to hash()'s output range.
     return hash_int if hash_int < 2**63 else hash_int - 2**6
+
+
+def render_textbox_on_image(
+    img: Image,
+    text: str,
+    text_color: tuple[int, ...] = (255, 255, 255, 255),
+    left_offset_frac: float = 0.2,
+    right_offset_frac: float = 0.2,
+    top_offset_frac: float = 0.05,
+    bottom_offset_frac: float = 0.85,
+    max_chars_per_line: int | None = None,
+    textbox_color: tuple[int, ...] | None = None,
+) -> Image:
+    """Add a textbox on an image."""
+    if max_chars_per_line is not None:
+        text = "\n".join(textwrap.wrap(text, width=max_chars_per_line))
+
+    img_height, img_width = img.shape[:2]
+    x = left_offset_frac * img_width
+    width = (1 - (left_offset_frac + right_offset_frac)) * img_width
+    y = top_offset_frac * img_height
+    height = (1 - (bottom_offset_frac + top_offset_frac)) * img_height
+    text_x = x + width / 2
+    text_y = y + height / 2
+
+    pil_img = PILImage.fromarray(img)  # type: ignore
+    draw = ImageDraw.Draw(pil_img)
+
+    if textbox_color is not None:
+        draw.rectangle([(x, y), (x + width, y + height)], fill=textbox_color)
+
+    font_size = 100
+    font = ImageFont.load_default(font_size)
+    while font_size > 1:
+        font = font.font_variant(size=font_size)  # type: ignore
+        bb = draw.multiline_textbbox(
+            (text_x, text_y), text, font=font, anchor="mm", font_size=font_size
+        )
+        if bb[0] >= x and bb[1] >= y and bb[2] <= x + width and bb[3] <= y + height:
+            break
+        font_size -= 1
+
+    draw.text(
+        (text_x, text_y),
+        text,
+        font=font,
+        fill=text_color,
+        anchor="mm",
+        font_size=font_size,
+    )
+
+    return np.array(pil_img)
