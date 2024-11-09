@@ -93,9 +93,9 @@ def test_openai_llm():
     cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     if "OPENAI_API_KEY" not in os.environ:
         os.environ["OPENAI_API_KEY"] = "dummy API key"
-    # Create an OpenAILLM with the curie model.
-    llm = OpenAILLM("gpt-4o", Path(cache_dir.name))
-    assert llm.get_id() == "openai-gpt-4o"
+    # Create an OpenAILLM.
+    llm = OpenAILLM("gpt-4o-mini", Path(cache_dir.name))
+    assert llm.get_id() == "openai-gpt-4o-mini"
     # Uncomment this to test manually, but do NOT uncomment in master, because
     # each query costs money.
     # completions = llm.sample_completions("Hi",
@@ -110,6 +110,13 @@ def test_openai_llm():
     #                                       123,
     #                                       num_completions=2)
     # assert completions == completions2
+    # logprobs = llm.get_multiple_choice_logprobs(
+    #     "Fill in the blank with the appropriate homophone: The ____ of the king lasted for ten years.",  # pylint: disable=line-too-long
+    #     choices=["rein", "reign", "rain"],
+    #     seed=0,
+    # )
+    # assert logprobs["reign"] > logprobs["rein"]
+    # assert logprobs["reign"] > logprobs["rain"]
 
 
 def test_gemini_vlm():
