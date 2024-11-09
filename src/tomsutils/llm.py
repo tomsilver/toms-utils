@@ -323,10 +323,17 @@ Choices:
                 logprob = token_to_logprob.get(f"{i+1}", -float("inf"))
                 choice_to_logprob[choice] = logprob
             with open(cache_filepath, "w", encoding="utf-8") as fp:
-                json.dump(choice_to_logprob, fp)
+                json.dump(
+                    {
+                        "prompt": prompt,
+                        "choices": choices,
+                        "logprobs": choice_to_logprob,
+                    },
+                    fp,
+                )
             logging.debug(f"Saved model response to {cache_filepath}.")
         with open(cache_filepath, "r", encoding="utf-8") as fp:
-            choice_to_logprob = json.load(fp)
+            choice_to_logprob = json.load(fp)["logprobs"]
         return choice_to_logprob
 
 
