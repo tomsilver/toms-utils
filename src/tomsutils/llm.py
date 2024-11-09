@@ -2,6 +2,7 @@
 
 import abc
 import base64
+import json
 import logging
 import os
 from io import BytesIO
@@ -72,6 +73,49 @@ class PretrainedLargeModel(abc.ABC):
         that does not expose the ability to set a random seed. Responses
         are saved to disk.
         """
+        cache_filepath = self._get_cache_filepath(
+            prompt, imgs, temperature, seed, num_completions, filename="prompt.txt"
+        )
+        if not cache_filepath.exists():
+            if self._use_cache_only:
+                raise ValueError("No cached response found for prompt.")
+            logging.debug(f"Querying model {self.get_id()} with new prompt.")
+            # Query the model.
+            completions = self._sample_completions(
+                prompt, imgs, temperature, seed, num_completions
+            )
+            # Cache the completion.
+            cache_str = prompt + _CACHE_SEP + _CACHE_SEP.join(completions)
+            with open(cache_filepath, "w", encoding="utf-8") as f:
+                f.write(cache_str)
+            if imgs is not None:
+                # Also save the images for easy debugging.
+                imgs_folderpath = cache_filepath.parent / "imgs"
+                os.makedirs(imgs_folderpath, exist_ok=True)
+                for i, img in enumerate(imgs):
+                    filename_suffix = str(i) + ".jpg"
+                    img.save(os.path.join(imgs_folderpath, filename_suffix))
+            logging.debug(f"Saved model response to {cache_filepath}.")
+        # Load the saved completion.
+        with open(cache_filepath, "r", encoding="utf-8") as f:
+            cache_str = f.read()
+        logging.debug(f"Loaded model response from {cache_filepath}.")
+        assert cache_str.count(_CACHE_SEP) == num_completions
+        cached_prompt, completion_strs = cache_str.split(_CACHE_SEP, 1)
+        assert cached_prompt == prompt
+        completions = completion_strs.split(_CACHE_SEP)
+        return completions
+
+    def _get_cache_filepath(
+        self,
+        prompt: str,
+        imgs: list[PIL.Image.Image] | None,
+        temperature: float,
+        seed: int,
+        num_completions: int = 1,
+        filename: str = "prompt.txt",
+    ) -> Path:
+
         # Set up the cache file.
         assert _CACHE_SEP not in prompt
         os.makedirs(self._cache_dir, exist_ok=True)
@@ -97,37 +141,7 @@ class PretrainedLargeModel(abc.ABC):
             cache_foldername += f"{imgs_id}"
         cache_folderpath = self._cache_dir / cache_foldername
         os.makedirs(cache_folderpath, exist_ok=True)
-        cache_filename = "prompt.txt"
-        cache_filepath = cache_folderpath / cache_filename
-        if not cache_filepath.exists():
-            if self._use_cache_only:
-                raise ValueError("No cached response found for prompt.")
-            logging.debug(f"Querying model {model_id} with new prompt.")
-            # Query the model.
-            completions = self._sample_completions(
-                prompt, imgs, temperature, seed, num_completions
-            )
-            # Cache the completion.
-            cache_str = prompt + _CACHE_SEP + _CACHE_SEP.join(completions)
-            with open(cache_filepath, "w", encoding="utf-8") as f:
-                f.write(cache_str)
-            if imgs is not None:
-                # Also save the images for easy debugging.
-                imgs_folderpath = cache_folderpath / "imgs"
-                os.makedirs(imgs_folderpath, exist_ok=True)
-                for i, img in enumerate(imgs):
-                    filename_suffix = str(i) + ".jpg"
-                    img.save(os.path.join(imgs_folderpath, filename_suffix))
-            logging.debug(f"Saved model response to {cache_filepath}.")
-        # Load the saved completion.
-        with open(cache_filepath, "r", encoding="utf-8") as f:
-            cache_str = f.read()
-        logging.debug(f"Loaded model response from {cache_filepath}.")
-        assert cache_str.count(_CACHE_SEP) == num_completions
-        cached_prompt, completion_strs = cache_str.split(_CACHE_SEP, 1)
-        assert cached_prompt == prompt
-        completions = completion_strs.split(_CACHE_SEP)
-        return completions
+        return cache_folderpath / filename
 
 
 class VisionLanguageModel(PretrainedLargeModel):
@@ -266,10 +280,11 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
             for _ in range(num_completions)
         ]
         return responses
-    
-    def get_multiple_choice_logprobs(self, prompt: str, choices: list[str], seed: int) -> dict[str, float]:
-        """TODO explain"""
-        # TODO cache!!!!!!!!!
+
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        """Return log probabilities for a multiple choice question."""
         choices_prompt = "\n".join([f"{i+1}. {c}" for i, c in enumerate(choices)])
         extended_prompt = f"""{prompt}
 
@@ -278,21 +293,40 @@ Given the choices below, return the number corresponding to your answer. Do not 
 Choices:
 {choices_prompt}
 """
-        messages = [{"role": "user", "content": extended_prompt, "type": "text"}]
-        client = openai.OpenAI()
-        completion = client.chat.completions.create(
-            model=self._model_name,
-            messages=messages,
+        # Handle caching: use JSON format for this.
+        cache_filepath = self._get_cache_filepath(
+            prompt=extended_prompt,
+            imgs=None,
+            temperature=0.0,
             seed=seed,
-            logprobs=True,
-            top_logprobs=len(choices),
+            filename="multiple_choice.json",
         )
-        top_logprobs = completion.choices[0].logprobs.content[0].top_logprobs
-        token_to_logprob = {c.token: c.logprob for c in top_logprobs}
-        choice_to_logprob: dict[str, float] = {}
-        for i, choice in enumerate(choices):
-            logprob = token_to_logprob.get(f"{i+1}", -float('inf'))
-            choice_to_logprob[choice] = logprob
+
+        if not cache_filepath.exists():
+            logging.debug(f"Querying model {self.get_id()} with new prompt.")
+            messages = [{"role": "user", "content": extended_prompt, "type": "text"}]
+            client = openai.OpenAI()
+            completion = client.chat.completions.create(
+                model=self._model_name,
+                messages=messages,  # type: ignore
+                seed=seed,
+                logprobs=True,
+                top_logprobs=len(choices),
+            )
+            logprobs = completion.choices[0].logprobs
+            assert logprobs is not None
+            assert logprobs.content is not None
+            top_logprobs = logprobs.content[0].top_logprobs
+            token_to_logprob = {c.token: c.logprob for c in top_logprobs}
+            choice_to_logprob: dict[str, float] = {}
+            for i, choice in enumerate(choices):
+                logprob = token_to_logprob.get(f"{i+1}", -float("inf"))
+                choice_to_logprob[choice] = logprob
+            with open(cache_filepath, "w", encoding="utf-8") as fp:
+                json.dump(choice_to_logprob, fp)
+            logging.debug(f"Saved model response to {cache_filepath}.")
+        with open(cache_filepath, "r", encoding="utf-8") as fp:
+            choice_to_logprob = json.load(fp)
         return choice_to_logprob
 
 
