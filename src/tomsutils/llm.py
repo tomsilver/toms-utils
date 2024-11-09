@@ -266,6 +266,34 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
             for _ in range(num_completions)
         ]
         return responses
+    
+    def get_multiple_choice_logprobs(self, prompt: str, choices: list[str], seed: int) -> dict[str, float]:
+        """TODO explain"""
+        # TODO cache!!!!!!!!!
+        choices_prompt = "\n".join([f"{i+1}. {c}" for i, c in enumerate(choices)])
+        extended_prompt = f"""{prompt}
+
+Given the choices below, return the number corresponding to your answer. Do not say anything except the number.
+
+Choices:
+{choices_prompt}
+"""
+        messages = [{"role": "user", "content": extended_prompt, "type": "text"}]
+        client = openai.OpenAI()
+        completion = client.chat.completions.create(
+            model=self._model_name,
+            messages=messages,
+            seed=seed,
+            logprobs=True,
+            top_logprobs=len(choices),
+        )
+        top_logprobs = completion.choices[0].logprobs.content[0].top_logprobs
+        token_to_logprob = {c.token: c.logprob for c in top_logprobs}
+        choice_to_logprob: dict[str, float] = {}
+        for i, choice in enumerate(choices):
+            logprob = token_to_logprob.get(f"{i+1}", -float('inf'))
+            choice_to_logprob[choice] = logprob
+        return choice_to_logprob
 
 
 class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
