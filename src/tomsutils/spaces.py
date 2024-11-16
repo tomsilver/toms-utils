@@ -39,8 +39,8 @@ class FunctionalSpace(gym.spaces.Space[_Element]):
 
     def __init__(
         self,
-        sample_fn: Callable[[np.random.Generator], _Element],
         contains_fn: Callable[[Any], bool],
+        sample_fn: Callable[[np.random.Generator], _Element] | None = None,
         seed: int | np.random.Generator | None = None,
     ) -> None:
         super().__init__(shape=None, dtype=None, seed=seed)
@@ -48,6 +48,8 @@ class FunctionalSpace(gym.spaces.Space[_Element]):
         self._contains_fn = contains_fn
 
     def sample(self, mask: Any | None = None) -> _Element:
+        if self._sample_fn is None:
+            raise NotImplementedError("Sampling not implemented for space")
         return self._sample_fn(self.np_random)
 
     def contains(self, x: Any) -> bool:

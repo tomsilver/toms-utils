@@ -25,7 +25,7 @@ def test_functional_space():
             return False
         return -3 <= x <= 3
 
-    space = FunctionalSpace(_sample_fn, _contains_fn, seed=123)
+    space = FunctionalSpace(_contains_fn, _sample_fn, seed=123)
     for _ in range(10):
         x = space.sample()
         assert space.contains(x)
