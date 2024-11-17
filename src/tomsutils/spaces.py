@@ -17,21 +17,21 @@ class EnumSpace(gym.spaces.Space[_Element]):
         seed: int | np.random.Generator | None = None,
     ) -> None:
         super().__init__(shape=None, dtype=None, seed=seed)
-        self._elements = list(elements)
-        self._num_elements = len(self._elements)
+        self.elements = list(elements)
+        self.num_elements = len(self.elements)
 
     def sample(self, mask: Any | None = None) -> _Element:
-        return self._elements[self.np_random.choice(self._num_elements)]
+        return self.elements[self.np_random.choice(self.num_elements)]
 
     def contains(self, x: Any) -> bool:
-        return x in self._elements
+        return x in self.elements
 
     @property
     def is_np_flattenable(self) -> bool:
         return False
 
     def __repr__(self) -> str:
-        return f"EnumSpace({self._elements})"
+        return f"EnumSpace({self.elements})"
 
 
 class FunctionalSpace(gym.spaces.Space[_Element]):
