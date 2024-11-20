@@ -30,6 +30,11 @@ class _DummyLLM(LargeLanguageModel):
             completions.append(completion)
         return completions
 
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError("TODO")
+
 
 class _DummyVLM(VisionLanguageModel):
 
@@ -43,6 +48,11 @@ class _DummyVLM(VisionLanguageModel):
             completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
         return completions
+
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError
 
 
 def test_large_language_model():

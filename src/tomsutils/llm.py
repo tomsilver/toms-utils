@@ -106,6 +106,12 @@ class PretrainedLargeModel(abc.ABC):
         completions = completion_strs.split(_CACHE_SEP)
         return completions
 
+    @abc.abstractmethod
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        """Return log probabilities for a multiple choice question."""
+
     def _get_cache_filepath(
         self,
         prompt: str,
@@ -373,6 +379,11 @@ class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
     def get_id(self) -> str:
         return f"Google-{self._model_name}"
 
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError("TODO")
+
 
 class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
     """Interface to the Google Gemini VLM (1.5).
@@ -409,6 +420,11 @@ class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
 
     def get_id(self) -> str:
         return f"Google-{self._model_name}"
+
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError("TODO")
 
 
 class OpenAIVLM(VisionLanguageModel, OpenAIModel):
@@ -492,3 +508,8 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
             for _ in range(num_completions)
         ]
         return responses
+
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError("TODO")
