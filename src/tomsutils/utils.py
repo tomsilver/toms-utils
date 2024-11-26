@@ -158,3 +158,21 @@ def render_textbox_on_image(
     )
 
     return np.array(pil_img)
+
+
+def sample_seed_from_rng(rng: np.random.Generator) -> int:
+    """Sample a random seed that can be used to seed another rng."""
+    return int(rng.integers(0, 2**31 - 1))
+
+
+def create_rng_from_rng(rng: np.random.Generator) -> np.random.Generator:
+    """Create another RNG by sampling a seed from a current rng.
+
+    Example use case: we want to call a deterministic function that uses an rng
+    but the number of times that the rng is used internally to the function may
+    vary (e.g., due to wall-clock timeouts). We shouldn't use the original rng
+    if it will later be used by other parts of the code because it would be
+    not deterministic after the function call.
+    """
+    seed = sample_seed_from_rng(rng)
+    return np.random.default_rng(seed)
