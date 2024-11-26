@@ -162,7 +162,7 @@ def render_textbox_on_image(
 
 def sample_seed_from_rng(rng: np.random.Generator) -> int:
     """Sample a random seed that can be used to seed another rng."""
-    return rng.integers(0, 2**31 - 1)
+    return int(rng.integers(0, 2**31 - 1))
 
 
 def create_rng_from_rng(rng: np.random.Generator) -> np.random.Generator:
