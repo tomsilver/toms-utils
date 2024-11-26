@@ -160,7 +160,7 @@ def render_textbox_on_image(
     return np.array(pil_img)
 
 
-def create_seed_from_rng(rng: np.random.Generator) -> int:
+def sample_seed_from_rng(rng: np.random.Generator) -> int:
     """Sample a random seed that can be used to seed another rng."""
     return rng.integers(0, 2**31 - 1)
 
@@ -174,5 +174,5 @@ def create_rng_from_rng(rng: np.random.Generator) -> np.random.Generator:
     if it will later be used by other parts of the code because it would be
     not deterministic after the function call.
     """
-    seed = create_seed_from_rng(rng)
+    seed = sample_seed_from_rng(rng)
     return np.random.default_rng(seed)
