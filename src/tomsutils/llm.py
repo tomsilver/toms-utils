@@ -219,7 +219,7 @@ class OpenAIModel:
             model=model,
             messages=messages,
             seed=seed,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
             temperature=temperature,
         )
         if verbose:
