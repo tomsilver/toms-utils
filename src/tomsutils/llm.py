@@ -27,6 +27,9 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from tomsutils.utils import consistent_hash
 
+# This speeds up the sandbox for code synthesis by a lot.
+mp.set_start_method("fork")
+
 # This is a special string that we assume will never appear in a prompt, and
 # which we use to separate prompt and completion in the cache. The reason to
 # do it this way, rather than saving the prompt and responses separately,
@@ -569,6 +572,7 @@ def synthesize_python_function_with_llm(
     function_name: str,
     input_output_examples: list[tuple[list[Any], Any]],
     initial_prompt: str,
+    code_prefix: str = "",
     previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
     outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     timeout: int = 30,
@@ -587,6 +591,7 @@ def synthesize_python_function_with_llm(
             prompt, imgs=None, temperature=temperature, seed=seed
         )[0]
         python_function_str = parse_python_code_from_llm_response(response)
+        python_function_str = code_prefix + python_function_str
         synthesized_function = SynthesizedPythonFunction(
             function_name, python_function_str
         )
@@ -697,77 +702,73 @@ def validate_llm_generated_python_function(
     timeout: int = 30,
 ) -> _PythonFunctionValidationResult:
     """Check for execution errors, timeouts, and input-output failures."""
-    for input_args, expected_output in input_output_examples:
-        # Handle possible timeouts.
-        manager = mp.Manager()
-        result_proxy_dict = manager.dict()
-        p = mp.Process(
-            target=_run_llm_generated_python_function_no_timeout,
-            args=(
-                synthesized_function,
-                input_args,
-                expected_output,
-                outputs_equal_check,
-                result_proxy_dict,
-            ),
-        )
-        p.start()
-        p.join(timeout)
-        # Timeout reached.
-        if p.is_alive():
-            # Treated like a KeyboardInterrupt.
-            assert p.pid is not None
-            os.kill(p.pid, signal.SIGINT)
-            # Give it a few more seconds then kill for good.
-            p.join(3)
-            p.kill()
-            # Return timeout.
-            return _TimeOutPythonFunctionValidationFailure(input_args, expected_output)
+    # Handle possible timeouts.
+    manager = mp.Manager()
+    result_proxy_dict = manager.dict()
+    # In case the input or output is large, use a shared memory.
+    p = mp.Process(
+        target=_run_llm_generated_python_function_no_timeout,
+        args=(
+            synthesized_function,
+            input_output_examples,
+            outputs_equal_check,
+            result_proxy_dict,
+        ),
+    )
+    p.start()
+    p.join(timeout)
+    result_dict = dict(result_proxy_dict)
+    # Timeout reached.
+    if p.is_alive():
+        # Treated like a KeyboardInterrupt.
+        assert p.pid is not None
+        os.kill(p.pid, signal.SIGINT)
+        # Give it a few more seconds then kill for good.
+        p.join(3)
+        p.kill()
+        # Return timeout.
+        idx: int = result_dict["last_example_index"]
+        input_args, expected_output = input_output_examples[idx]
+        return _TimeOutPythonFunctionValidationFailure(input_args, expected_output)
 
-        # Did not time out.
-        result_dict = dict(result_proxy_dict)
-        validation_result: _PythonFunctionValidationResult = result_dict[
-            "validation_result"
-        ]
-        if isinstance(validation_result, _PythonFunctionValidationSuccess):
-            continue
-        return validation_result
-
-    # Passed all checks!
-    return _PythonFunctionValidationSuccess()
+    # Did not time out.
+    return result_dict["validation_result"]
 
 
 def _run_llm_generated_python_function_no_timeout(
     synthesized_function: SynthesizedPythonFunction,
-    input_args: list[Any],
-    expected_output: Any,
+    input_output_examples: list[tuple[list[Any], Any]],
     outputs_equal_check: Callable[[Any, Any], bool],
     result_dict: dict,
 ) -> None:
-    try:
-        output = synthesized_function.run(input_args)
-    except BaseException as e:  # pylint: disable=broad-exception-caught
-        tb = traceback.format_exception(e)
-        tb_lines = [
-            l.replace(str(synthesized_function.filepath), "<file-name-omitted>")
-            for l in tb
-            if "tomsutils" not in l
-        ]
-        tb_str = "".join(tb_lines)
-        result_dict["validation_result"] = _ExceptionPythonFunctionValidationFailure(
-            input_args, expected_output, tb_str
-        )
-        return
-    # An output was received, so compare it with the expected output.
-    if outputs_equal_check(output, expected_output):
-        # Success!
-        result: _PythonFunctionValidationResult = _PythonFunctionValidationSuccess()
-    # Failure.
-    else:
-        result = _ExpectedOutputPythonFunctionValidationFailure(
-            input_args, expected_output, output
-        )
-    result_dict["validation_result"] = result
+    for idx, (input_args, expected_output) in enumerate(input_output_examples):
+        result_dict["last_example_index"] = idx
+        try:
+            output = synthesized_function.run(input_args)
+        except BaseException as e:  # pylint: disable=broad-exception-caught
+            tb = traceback.format_exception(e)
+            tb_lines = [
+                l.replace(str(synthesized_function.filepath), "<file-name-omitted>")
+                for l in tb
+                if "tomsutils" not in l
+            ]
+            tb_str = "".join(tb_lines)
+            result_dict["validation_result"] = (
+                _ExceptionPythonFunctionValidationFailure(
+                    input_args, expected_output, tb_str
+                )
+            )
+            return
+        # Output failure.
+        if not outputs_equal_check(output, expected_output):
+            result_dict["validation_result"] = (
+                _ExpectedOutputPythonFunctionValidationFailure(
+                    input_args, expected_output, output
+                )
+            )
+            return
+    # All successful!
+    result_dict["validation_result"] = _PythonFunctionValidationSuccess()
     return
 
 
