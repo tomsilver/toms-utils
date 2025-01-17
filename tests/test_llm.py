@@ -3,9 +3,10 @@
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
-from gymnasium.spaces import Box
+from gymnasium.spaces import Box, Space
 from PIL import Image
 
 from tomsutils.llm import (
@@ -277,12 +278,12 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
     # your code here
 """
 
-    input_output_examples = [
-        (("nomsy", 0.5, 0.5), True),
-        (("rover", 0.5, 0.5), True),
+    input_output_examples: list[tuple[list[Any], Any]] = [
+        (["nomsy", 0.5, 0.5], True),
+        (["rover", 0.5, 0.5], True),
     ]
 
-    arg_idx_to_space = {
+    arg_idx_to_space: dict[int, Space] = {
         1: Box(0.0, 1.0, shape=tuple()),
         2: Box(0.0, 1.0, shape=tuple()),
     }

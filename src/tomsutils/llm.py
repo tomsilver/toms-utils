@@ -568,21 +568,23 @@ $function
 )
 
 
-class _PythonFunctionValidationSuccess:
-    """Indicates all checks passed."""
-
-
-@dataclass(frozen=True)
-class _PythonFunctionValidationFailure:
-    """Some check failed."""
+class _PythonFunctionValidationResult:
+    """Either a success or failure."""
 
     @abc.abstractmethod
     def get_prompt_addendum(self) -> str:
         """Get a prompt to correct the program."""
 
-    def get_input_arg_str(self) -> str:
-        """Get a string representation of the input arguments."""
-        return ", ".join([str(x) for x in self.input_args])
+
+class _PythonFunctionValidationSuccess(_PythonFunctionValidationResult):
+    """Indicates all checks passed."""
+
+    def get_prompt_addendum(self) -> str:
+        raise NotImplementedError
+
+
+class _PythonFunctionValidationFailure(_PythonFunctionValidationResult):
+    """Some check failed."""
 
 
 @dataclass(frozen=True)
@@ -603,6 +605,10 @@ the following exception was raised:
 
 Fix the code.
 """
+
+    def get_input_arg_str(self) -> str:
+        """Get a string representation of the input arguments."""
+        return ", ".join([str(x) for x in self.input_args])
 
 
 @dataclass(frozen=True)
@@ -640,10 +646,9 @@ but the following output was expected:
 Fix the code.
 """
 
-
-_PythonFunctionValidationResult = (
-    _PythonFunctionValidationSuccess | _PythonFunctionValidationFailure
-)
+    def get_input_arg_str(self) -> str:
+        """Get a string representation of the input arguments."""
+        return ", ".join([str(x) for x in self.input_args])
 
 
 @dataclass(frozen=True)
