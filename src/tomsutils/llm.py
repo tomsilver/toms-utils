@@ -732,7 +732,7 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
 ):
     """Optimizes by running a grid search over Box spaces."""
 
-    def __init__(self, arg_idx_to_space: dict[int, Space], num_grid_steps: int = 10):
+    def __init__(self, arg_idx_to_space: dict[int, Space], num_grid_steps: int = 11):
         super().__init__(arg_idx_to_space)
 
         # Set up the grid.
