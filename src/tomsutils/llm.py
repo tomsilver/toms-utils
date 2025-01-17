@@ -3,6 +3,7 @@
 import abc
 import base64
 import importlib
+import itertools
 import json
 import logging
 import multiprocessing as mp
@@ -21,8 +22,10 @@ from typing import Any, Callable, Collection
 
 import google.generativeai as genai
 import imagehash
+import numpy as np
 import openai
 import PIL.Image
+from gymnasium.spaces import Box, Space
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from tomsutils.utils import consistent_hash
@@ -567,76 +570,33 @@ $function
 )
 
 
-def synthesize_python_function_with_llm(
-    llm: LargeLanguageModel,
-    function_name: str,
-    input_output_examples: list[tuple[list[Any], Any]],
-    initial_prompt: str,
-    code_prefix: str = "",
-    previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
-    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
-    timeout: int = 30,
-    max_debug_attempts: int = 5,
-    temperature: float = 0.0,
-    seed: int = 0,
-) -> tuple[SynthesizedPythonFunction, bool]:
-    """Use an LLM to synthesize a python function.
-
-    The input output examples are each of the form (args, output).
-    """
-    prompt = initial_prompt
-    synthesized_function: SynthesizedPythonFunction | None = None
-    for _ in range(max_debug_attempts):
-        response = llm.sample_completions(
-            prompt, imgs=None, temperature=temperature, seed=seed
-        )[0]
-        python_function_str = parse_python_code_from_llm_response(response)
-        python_function_str = code_prefix + python_function_str
-        synthesized_function = SynthesizedPythonFunction(
-            function_name, python_function_str
-        )
-        validation_result = validate_llm_generated_python_function(
-            synthesized_function,
-            input_output_examples,
-            outputs_equal_check=outputs_equal_check,
-            timeout=timeout,
-        )
-        # Success!
-        if isinstance(validation_result, _PythonFunctionValidationSuccess):
-            return synthesized_function, True
-        # Failure, reprompt.
-        previous_prompt = previous_synthesized_prompt.substitute(function=response)
-        error_prompt = validation_result.get_prompt_addendum()
-        prompt = initial_prompt + previous_prompt + error_prompt
-    # If all debug attempts are exceeded, return the last program and report failure.
-    assert synthesized_function is not None
-    return synthesized_function, False
-
-
-class _PythonFunctionValidationSuccess:
-    """Indicates all checks passed."""
-
-
-@dataclass(frozen=True)
-class _PythonFunctionValidationFailure:
-    """Some check failed."""
-
-    input_args: list[Any]
-    expected_output: Any
+class _PythonFunctionValidationResult:
+    """Either a success or failure."""
 
     @abc.abstractmethod
     def get_prompt_addendum(self) -> str:
         """Get a prompt to correct the program."""
 
-    def get_input_arg_str(self) -> str:
-        """Get a string representation of the input arguments."""
-        return ", ".join([str(x) for x in self.input_args])
+
+class _PythonFunctionValidationSuccess(_PythonFunctionValidationResult):
+    """Indicates all checks passed."""
+
+    def get_prompt_addendum(self) -> str:
+        raise NotImplementedError
+
+
+class _PythonFunctionValidationFailure(_PythonFunctionValidationResult):
+    """Some check failed."""
+
+    def get_prompt_addendum(self) -> str:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
 class _ExceptionPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
     """An exception was raised while trying to execute the python function."""
 
+    input_args: list[Any]
     traceback_str: str
 
     def get_prompt_addendum(self) -> str:
@@ -651,17 +611,17 @@ the following exception was raised:
 Fix the code.
 """
 
+    def get_input_arg_str(self) -> str:
+        """Get a string representation of the input arguments."""
+        return ", ".join([str(x) for x in self.input_args])
+
 
 @dataclass(frozen=True)
 class _TimeOutPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
     """The code ran out of time while executing."""
 
     def get_prompt_addendum(self) -> str:
-        return f"""Given these input arguments:
-
-{self.get_input_arg_str()}
-        
-the code timed out while executing. There may be an infinite loop.
+        return """The code timed out while executing. There may be an infinite loop.
 
 Fix the code.
 """
@@ -671,6 +631,8 @@ Fix the code.
 class _ExpectedOutputPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
     """The code produced an incorrect output."""
 
+    input_args: list[Any]
+    expected_output: Any
     output: Any
 
     def get_prompt_addendum(self) -> str:
@@ -689,28 +651,208 @@ but the following output was expected:
 Fix the code.
 """
 
+    def get_input_arg_str(self) -> str:
+        """Get a string representation of the input arguments."""
+        return ", ".join([str(x) for x in self.input_args])
 
-_PythonFunctionValidationResult = (
-    _PythonFunctionValidationSuccess | _PythonFunctionValidationFailure
-)
+
+@dataclass(frozen=True)
+class SynthesisInfo:
+    """Additional info returned along with a synthesized program."""
+
+    result: _PythonFunctionValidationResult
+    optimized_args: dict[int, Any]  # arg index to value
+
+    @property
+    def success(self) -> bool:
+        """Whether the synthesis was a success."""
+        return isinstance(self.result, _PythonFunctionValidationSuccess)
 
 
-def validate_llm_generated_python_function(
+class SynthesizedProgramArgumentOptimizer:
+    """Optimizes certain arguments of a synthesized function."""
+
+    def __init__(self, arg_idx_to_space: dict[int, Space]):
+        self._arg_idx_to_space = arg_idx_to_space
+
+    @abc.abstractmethod
+    def optimize(
+        self,
+        synthesized_function: SynthesizedPythonFunction,
+        input_output_examples: list[tuple[list[Any], Any]],
+        outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    ) -> dict[int, Any]:
+        """Run optimization."""
+
+    def score(
+        self,
+        candidate: dict[int, Any],
+        synthesized_function: SynthesizedPythonFunction,
+        input_output_examples: list[tuple[list[Any], Any]],
+        outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    ) -> int:
+        """Get the score (lower is better and zero is perfect)."""
+        # Exceptions should be caught externally.
+        score = 0
+        for input_args, expected_output in input_output_examples:
+            input_args = self.substitute_optimized_args(input_args, candidate)
+            output = synthesized_function.run(input_args)
+            if not outputs_equal_check(output, expected_output):
+                score += 1
+        return score
+
+    def get_optimized_args_from_input(self, input_args: list[Any]) -> dict[int, Any]:
+        """Extract optimized arguments from an input."""
+        return {idx: input_args[idx] for idx in self._arg_idx_to_space}
+
+    def substitute_optimized_args(
+        self, input_args: list[Any], optimized_args: dict[int, Any]
+    ) -> list[Any]:
+        """Run substitution."""
+        new_args = list(input_args)
+        for idx, value in optimized_args.items():
+            new_args[idx] = value
+        return new_args
+
+
+class NullSynthesizedProgramArgumentOptimizer(SynthesizedProgramArgumentOptimizer):
+    """Doesn't actually run any optimization."""
+
+    def optimize(
+        self,
+        synthesized_function: SynthesizedPythonFunction,
+        input_output_examples: list[tuple[list[Any], Any]],
+        outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    ) -> dict[int, Any]:
+        return self.get_optimized_args_from_input(input_output_examples[0][0])
+
+
+class GridSearchSynthesizedProgramArgumentOptimizer(
+    SynthesizedProgramArgumentOptimizer
+):
+    """Optimizes by running a grid search over Box spaces."""
+
+    def __init__(self, arg_idx_to_space: dict[int, Space], num_grid_steps: int = 11):
+        super().__init__(arg_idx_to_space)
+
+        # Set up the grid.
+        idx_to_grid = {}
+        for arg_idx, box in arg_idx_to_space.items():
+            assert isinstance(box, Box)
+            if box.shape != tuple():
+                raise ValueError(
+                    f"Box at index {arg_idx} must be 1D (shape=(,)), got {box.shape}."
+                )
+
+            low, high = box.low, box.high
+            idx_to_grid[arg_idx] = np.linspace(low, high, num_grid_steps, endpoint=True)
+
+        # Collect the grids in ascending order of arg_idx.
+        sorted_arg_indices = sorted(idx_to_grid.keys())
+        grid_arrays = [idx_to_grid[idx] for idx in sorted_arg_indices]
+
+        # Cartesian product of all grids.
+        all_combinations = itertools.product(*grid_arrays)
+
+        # For each combination, build the dictionary {arg_idx: value}.
+        self._grid = []
+        for combination in all_combinations:
+            current_dict = dict(zip(sorted_arg_indices, combination))
+            self._grid.append(current_dict)
+
+    def optimize(
+        self,
+        synthesized_function: SynthesizedPythonFunction,
+        input_output_examples: list[tuple[list[Any], Any]],
+        outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    ) -> dict[int, Any]:
+        best_candidate: dict[int, Any] | None = None
+        best_score = 1000000000
+        for candidate in self._grid:
+            candidate_score = self.score(
+                candidate,
+                synthesized_function,
+                input_output_examples,
+                outputs_equal_check,
+            )
+            if candidate_score < best_score:
+                best_candidate = candidate
+                best_score = candidate_score
+            if candidate_score == 0:
+                break  # early termination
+        assert best_candidate is not None
+        return best_candidate
+
+
+def synthesize_python_function_with_llm(
+    llm: LargeLanguageModel,
+    function_name: str,
+    input_output_examples: list[tuple[list[Any], Any]],
+    initial_prompt: str,
+    code_prefix: str = "",
+    previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
+    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    argument_optimizer: SynthesizedProgramArgumentOptimizer | None = None,
+    timeout: int = 30,
+    max_debug_attempts: int = 5,
+    temperature: float = 0.0,
+    seed: int = 0,
+) -> tuple[SynthesizedPythonFunction, SynthesisInfo]:
+    """Use an LLM to synthesize a python function.
+
+    The input output examples are each of the form (args, output).
+    """
+    if argument_optimizer is None:
+        argument_optimizer = NullSynthesizedProgramArgumentOptimizer({})
+    prompt = initial_prompt
+    synthesized_function: SynthesizedPythonFunction | None = None
+    synthesis_info: SynthesisInfo | None = None
+    for _ in range(max_debug_attempts):
+        response = llm.sample_completions(
+            prompt, imgs=None, temperature=temperature, seed=seed
+        )[0]
+        python_function_str = parse_python_code_from_llm_response(response)
+        python_function_str = code_prefix + python_function_str
+        synthesized_function = SynthesizedPythonFunction(
+            function_name, python_function_str
+        )
+        synthesis_info = optimize_llm_generated_python_function(
+            synthesized_function,
+            input_output_examples,
+            argument_optimizer=argument_optimizer,
+            outputs_equal_check=outputs_equal_check,
+            timeout=timeout,
+        )
+        # Success!
+        if synthesis_info.success:
+            return synthesized_function, synthesis_info
+        # Failure, reprompt.
+        previous_prompt = previous_synthesized_prompt.substitute(function=response)
+        error_prompt = synthesis_info.result.get_prompt_addendum()
+        prompt = initial_prompt + previous_prompt + error_prompt
+    # If all debug attempts are exceeded, return the last program and report failure.
+    assert synthesized_function is not None
+    assert synthesis_info is not None
+    return synthesized_function, synthesis_info
+
+
+def optimize_llm_generated_python_function(
     synthesized_function: SynthesizedPythonFunction,
     input_output_examples: list[tuple[list[Any], Any]],
+    argument_optimizer: SynthesizedProgramArgumentOptimizer,
     outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     timeout: int = 30,
-) -> _PythonFunctionValidationResult:
+) -> SynthesisInfo:
     """Check for execution errors, timeouts, and input-output failures."""
     # Handle possible timeouts.
     manager = mp.Manager()
     result_proxy_dict = manager.dict()
-    # In case the input or output is large, use a shared memory.
     p = mp.Process(
-        target=_run_llm_generated_python_function_no_timeout,
+        target=_optimize_llm_generated_python_function_no_timeout,
         args=(
             synthesized_function,
             input_output_examples,
+            argument_optimizer,
             outputs_equal_check,
             result_proxy_dict,
         ),
@@ -727,36 +869,49 @@ def validate_llm_generated_python_function(
         p.join(3)
         p.kill()
         # Return timeout.
-        idx: int = result_dict["last_example_index"]
-        input_args, expected_output = input_output_examples[idx]
-        return _TimeOutPythonFunctionValidationFailure(input_args, expected_output)
+        validation_result: _PythonFunctionValidationResult = (
+            _TimeOutPythonFunctionValidationFailure()
+        )
+    else:
+        # Did not time out.
+        validation_result = result_dict["validation_result"]
+    # Finish synthesis info.
+    return SynthesisInfo(validation_result, result_dict["optimized_args"])
 
-    # Did not time out.
-    return result_dict["validation_result"]
 
-
-def _run_llm_generated_python_function_no_timeout(
+def _optimize_llm_generated_python_function_no_timeout(
     synthesized_function: SynthesizedPythonFunction,
     input_output_examples: list[tuple[list[Any], Any]],
+    argument_optimizer: SynthesizedProgramArgumentOptimizer,
     outputs_equal_check: Callable[[Any, Any], bool],
     result_dict: dict,
 ) -> None:
-    for idx, (input_args, expected_output) in enumerate(input_output_examples):
-        result_dict["last_example_index"] = idx
+
+    # Initialize the optimization arguments using the first input-output example.
+    result_dict["optimized_args"] = argument_optimizer.get_optimized_args_from_input(
+        input_output_examples[0][0]
+    )
+
+    # Run argument optimization.
+    try:
+        optimized_args = argument_optimizer.optimize(
+            synthesized_function, input_output_examples, outputs_equal_check
+        )
+        result_dict["optimized_args"] = optimized_args
+    except BaseException:  # pylint: disable=broad-exception-caught
+        pass  # raise the failure below instead because we don't know input idx
+
+    # This might be redundant; look into refactoring.
+    optimize_args = result_dict["optimized_args"]
+    for input_args, expected_output in input_output_examples:
+        input_args = argument_optimizer.substitute_optimized_args(
+            input_args, optimize_args
+        )
         try:
             output = synthesized_function.run(input_args)
         except BaseException as e:  # pylint: disable=broad-exception-caught
-            tb = traceback.format_exception(e)
-            tb_lines = [
-                l.replace(str(synthesized_function.filepath), "<file-name-omitted>")
-                for l in tb
-                if "tomsutils" not in l
-            ]
-            tb_str = "".join(tb_lines)
-            result_dict["validation_result"] = (
-                _ExceptionPythonFunctionValidationFailure(
-                    input_args, expected_output, tb_str
-                )
+            result_dict["validation_result"] = _get_validation_failure_from_exception(
+                e, input_args, synthesized_function
             )
             return
         # Output failure.
@@ -786,3 +941,18 @@ def parse_python_code_from_llm_response(response: str) -> str:
         python_response = python_remainder[:python_end]
         return python_response
     return response
+
+
+def _get_validation_failure_from_exception(
+    e: BaseException,
+    input_args: list[Any],
+    synthesized_function: SynthesizedPythonFunction,
+) -> _ExceptionPythonFunctionValidationFailure:
+    tb = traceback.format_exception(e)
+    tb_lines = [
+        l.replace(str(synthesized_function.filepath), "<file-name-omitted>")
+        for l in tb
+        if "tomsutils" not in l
+    ]
+    tb_str = "".join(tb_lines)
+    return _ExceptionPythonFunctionValidationFailure(input_args, tb_str)

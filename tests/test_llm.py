@@ -3,13 +3,16 @@
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
+from gymnasium.spaces import Box, Space
 from PIL import Image
 
 from tomsutils.llm import (
     GoogleGeminiLLM,
     GoogleGeminiVLM,
+    GridSearchSynthesizedProgramArgumentOptimizer,
     LargeLanguageModel,
     OpenAILLM,
     OpenAIVLM,
@@ -262,4 +265,61 @@ def count_good_dogs(dog_names: list[str]) -> int:
     assert success
 
     for input_args, expected_output in input_output_examples:
+        assert fn.run(input_args) == expected_output
+
+
+def test_synthesize_python_function_with_llm_optimize_arguments():
+    """Tests synthesize_python_function_with_llm() with argument
+    optimization."""
+    function_name = "find_my_thresholds"
+    prompt = """Generate a Python function of the form
+    
+def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
+    # your code here
+"""
+
+    input_output_examples: list[tuple[list[Any], Any]] = [
+        (["nomsy", 0.5, 0.5], True),
+        (["rover", 0.5, 0.5], True),
+    ]
+
+    arg_idx_to_space: dict[int, Space] = {
+        1: Box(0.0, 1.0, shape=tuple()),
+        2: Box(0.0, 1.0, shape=tuple()),
+    }
+    arg_optimizer = GridSearchSynthesizedProgramArgumentOptimizer(arg_idx_to_space)
+
+    response = """```python
+def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
+    if dog_name == "nomsy":
+        return threshold1 < 0.1
+    if dog_name == "rover":
+        return threshold2 > 0.9
+    raise NotImplementedError
+```    
+"""
+
+    completions = [
+        [response],
+        [response],
+    ]
+    cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    llm = _MockLLM(completions, Path(cache_dir.name))
+
+    fn, info = synthesize_python_function_with_llm(
+        llm,
+        function_name,
+        input_output_examples,
+        prompt,
+        timeout=2,
+        argument_optimizer=arg_optimizer,
+    )
+    assert info.success
+    assert info.optimized_args[1] < 0.1
+    assert info.optimized_args[2] > 0.9
+
+    for input_args, expected_output in input_output_examples:
+        input_args = arg_optimizer.substitute_optimized_args(
+            input_args, info.optimized_args
+        )
         assert fn.run(input_args) == expected_output
