@@ -586,6 +586,9 @@ class _PythonFunctionValidationSuccess(_PythonFunctionValidationResult):
 class _PythonFunctionValidationFailure(_PythonFunctionValidationResult):
     """Some check failed."""
 
+    def get_prompt_addendum(self) -> str:
+        raise NotImplementedError
+
 
 @dataclass(frozen=True)
 class _ExceptionPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
@@ -616,7 +619,7 @@ class _TimeOutPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
     """The code ran out of time while executing."""
 
     def get_prompt_addendum(self) -> str:
-        return f"""The code timed out while executing. There may be an infinite loop.
+        return """The code timed out while executing. There may be an infinite loop.
 
 Fix the code.
 """
@@ -837,7 +840,7 @@ def _optimize_llm_generated_python_function_no_timeout(
             synthesized_function, input_output_examples, outputs_equal_check
         )
         result_dict["optimized_args"] = optimized_args
-    except BaseException as e:  # pylint: disable=broad-exception-caught
+    except BaseException:  # pylint: disable=broad-exception-caught
         pass  # raise the failure below instead because we don't know input idx
 
     # This might be redundant; look into refactoring.
