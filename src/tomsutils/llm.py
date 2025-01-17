@@ -569,6 +569,7 @@ def synthesize_python_function_with_llm(
     function_name: str,
     input_output_examples: list[tuple[list[Any], Any]],
     initial_prompt: str,
+    code_prefix: str = "",
     previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
     outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     timeout: int = 30,
@@ -587,6 +588,7 @@ def synthesize_python_function_with_llm(
             prompt, imgs=None, temperature=temperature, seed=seed
         )[0]
         python_function_str = parse_python_code_from_llm_response(response)
+        python_function_str = code_prefix + python_function_str
         synthesized_function = SynthesizedPythonFunction(
             function_name, python_function_str
         )
