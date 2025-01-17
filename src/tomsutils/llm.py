@@ -27,6 +27,9 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from tomsutils.utils import consistent_hash
 
+# This speeds up the sandbox for code synthesis by a lot.
+mp.set_start_method("fork")
+
 # This is a special string that we assume will never appear in a prompt, and
 # which we use to separate prompt and completion in the cache. The reason to
 # do it this way, rather than saving the prompt and responses separately,
@@ -703,6 +706,7 @@ def validate_llm_generated_python_function(
         # Handle possible timeouts.
         manager = mp.Manager()
         result_proxy_dict = manager.dict()
+        # In case the input or output is large, use a shared memory.
         p = mp.Process(
             target=_run_llm_generated_python_function_no_timeout,
             args=(
