@@ -2,28 +2,28 @@
 
 import abc
 import base64
+import importlib
 import json
 import logging
+import multiprocessing as mp
+import operator
 import os
-from io import BytesIO
-from pathlib import Path
-from typing import Any, Collection
+import signal
+import string
+import sys
+import tempfile
+import traceback
 from dataclasses import dataclass
 from functools import cached_property
-import tempfile
-import sys
-import string
-import time
-import multiprocessing as mp
-import signal
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Callable, Collection
 
 import google.generativeai as genai
 import imagehash
 import openai
 import PIL.Image
 from tenacity import retry, stop_after_attempt, wait_random_exponential
-import importlib
-import traceback
 
 from tomsutils.utils import consistent_hash
 
@@ -555,8 +555,8 @@ class SynthesizedPythonFunction:
         return getattr(module, self.function_name)(*input_args)  # type: ignore  # pylint: disable=undefined-variable
 
 
-_DEFAULT_PREVIOUS_SYNTHESIZED_PROGRAM_PROMPT = string.Template(
-"""
+_PREVIOUS_SYNTHESIZED_PROMPT = string.Template(
+    """
 Previously, you synthesized this function:
 
 $function
@@ -569,31 +569,43 @@ def synthesize_python_function_with_llm(
     function_name: str,
     input_output_examples: list[tuple[list[Any], Any]],
     initial_prompt: str,
-    previous_synthesized_prompt: string.Template = _DEFAULT_PREVIOUS_SYNTHESIZED_PROGRAM_PROMPT,
+    previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
+    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     timeout: int = 30,
-    max_debug_attempts: int = 4,
+    max_debug_attempts: int = 5,
     temperature: float = 0.0,
     seed: int = 0,
-) -> SynthesizedPythonFunction:
+) -> tuple[SynthesizedPythonFunction, bool]:
     """Use an LLM to synthesize a python function.
-    
+
     The input output examples are each of the form (args, output).
     """
     prompt = initial_prompt
+    synthesized_function: SynthesizedPythonFunction | None = None
     for _ in range(max_debug_attempts):
-        response = llm.sample_completions(prompt, imgs=None, temperature=temperature, seed=seed)[0]
+        response = llm.sample_completions(
+            prompt, imgs=None, temperature=temperature, seed=seed
+        )[0]
         python_function_str = parse_python_code_from_llm_response(response)
-        synthesized_function = SynthesizedPythonFunction(function_name, python_function_str)
-        validation_result = validate_llm_generated_python_function(synthesized_function, input_output_examples, timeout)
+        synthesized_function = SynthesizedPythonFunction(
+            function_name, python_function_str
+        )
+        validation_result = validate_llm_generated_python_function(
+            synthesized_function,
+            input_output_examples,
+            outputs_equal_check=outputs_equal_check,
+            timeout=timeout,
+        )
         # Success!
         if isinstance(validation_result, _PythonFunctionValidationSuccess):
-            return synthesized_function
+            return synthesized_function, True
         # Failure, reprompt.
         previous_prompt = previous_synthesized_prompt.substitute(function=response)
         error_prompt = validation_result.get_prompt_addendum()
         prompt = initial_prompt + previous_prompt + error_prompt
-        import ipdb; ipdb.set_trace()
-        
+    # If all debug attempts are exceeded, return the last program and report failure.
+    assert synthesized_function is not None
+    return synthesized_function, False
 
 
 class _PythonFunctionValidationSuccess:
@@ -603,7 +615,7 @@ class _PythonFunctionValidationSuccess:
 @dataclass(frozen=True)
 class _PythonFunctionValidationFailure:
     """Some check failed."""
-    
+
     input_args: list[Any]
     expected_output: Any
 
@@ -633,7 +645,8 @@ the following exception was raised:
 
 Fix the code.
 """
-    
+
+
 @dataclass(frozen=True)
 class _TimeOutPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
     """The code ran out of time while executing."""
@@ -649,11 +662,40 @@ Fix the code.
 """
 
 
-_PythonFunctionValidationResult = _PythonFunctionValidationSuccess | _PythonFunctionValidationFailure
+@dataclass(frozen=True)
+class _ExpectedOutputPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
+    """The code produced an incorrect output."""
 
-def validate_llm_generated_python_function(synthesized_function: SynthesizedPythonFunction,
-                                           input_output_examples: list[tuple[list[Any], Any]],
-                                           timeout: int = 30) -> _PythonFunctionValidationResult:
+    output: Any
+
+    def get_prompt_addendum(self) -> str:
+        return f"""Given these input arguments:
+
+{self.get_input_arg_str()}
+        
+the code produced this output:
+
+{self.output}
+
+but the following output was expected:
+
+{self.expected_output}
+
+Fix the code.
+"""
+
+
+_PythonFunctionValidationResult = (
+    _PythonFunctionValidationSuccess | _PythonFunctionValidationFailure
+)
+
+
+def validate_llm_generated_python_function(
+    synthesized_function: SynthesizedPythonFunction,
+    input_output_examples: list[tuple[list[Any], Any]],
+    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    timeout: int = 30,
+) -> _PythonFunctionValidationResult:
     """Check for execution errors, timeouts, and input-output failures."""
     for input_args, expected_output in input_output_examples:
         # Handle possible timeouts.
@@ -661,7 +703,13 @@ def validate_llm_generated_python_function(synthesized_function: SynthesizedPyth
         result_proxy_dict = manager.dict()
         p = mp.Process(
             target=_run_llm_generated_python_function_no_timeout,
-            args=(synthesized_function, input_args, expected_output, result_proxy_dict),
+            args=(
+                synthesized_function,
+                input_args,
+                expected_output,
+                outputs_equal_check,
+                result_proxy_dict,
+            ),
         )
         p.start()
         p.join(timeout)
@@ -678,7 +726,9 @@ def validate_llm_generated_python_function(synthesized_function: SynthesizedPyth
 
         # Did not time out.
         result_dict = dict(result_proxy_dict)
-        validation_result: _PythonFunctionValidationResult = result_dict["validation_result"]
+        validation_result: _PythonFunctionValidationResult = result_dict[
+            "validation_result"
+        ]
         if isinstance(validation_result, _PythonFunctionValidationSuccess):
             continue
         return validation_result
@@ -687,12 +737,13 @@ def validate_llm_generated_python_function(synthesized_function: SynthesizedPyth
     return _PythonFunctionValidationSuccess()
 
 
-def _run_llm_generated_python_function_no_timeout(synthesized_function: SynthesizedPythonFunction,
-                                                  input_args: list[Any],
-                                                  expected_output: Any,
-                                                  result_dict: dict
-                                                  ) -> None:
-    result: _PythonFunctionValidationResult = _PythonFunctionValidationSuccess()
+def _run_llm_generated_python_function_no_timeout(
+    synthesized_function: SynthesizedPythonFunction,
+    input_args: list[Any],
+    expected_output: Any,
+    outputs_equal_check: Callable[[Any, Any], bool],
+    result_dict: dict,
+) -> None:
     try:
         output = synthesized_function.run(input_args)
     except BaseException as e:  # pylint: disable=broad-exception-caught
@@ -703,9 +754,21 @@ def _run_llm_generated_python_function_no_timeout(synthesized_function: Synthesi
             if "tomsutils" not in l
         ]
         tb_str = "".join(tb_lines)
-        result = _ExceptionPythonFunctionValidationFailure(input_args, expected_output, tb_str)
-    
+        result_dict["validation_result"] = _ExceptionPythonFunctionValidationFailure(
+            input_args, expected_output, tb_str
+        )
+        return
+    # An output was received, so compare it with the expected output.
+    if outputs_equal_check(output, expected_output):
+        # Success!
+        result: _PythonFunctionValidationResult = _PythonFunctionValidationSuccess()
+    # Failure.
+    else:
+        result = _ExpectedOutputPythonFunctionValidationFailure(
+            input_args, expected_output, output
+        )
     result_dict["validation_result"] = result
+    return
 
 
 def parse_python_code_from_llm_response(response: str) -> str:

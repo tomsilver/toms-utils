@@ -35,11 +35,16 @@ class _DummyLLM(LargeLanguageModel):
         self, prompt: str, choices: list[str], seed: int
     ) -> dict[str, float]:
         raise NotImplementedError("TODO")
-    
+
 
 class _MockLLM(LargeLanguageModel):
 
-    def __init__(self, completions: list[str], cache_dir: Path, use_cache_only: bool = False) -> None:
+    def __init__(
+        self,
+        completions: list[list[str]],
+        cache_dir: Path,
+        use_cache_only: bool = False,
+    ) -> None:
         super().__init__(cache_dir, use_cache_only)
         self.completions = completions
 
@@ -212,11 +217,7 @@ def count_good_dogs(dog_names: list[str]) -> int:
     # your code here
 """
 
-
-    input_output_examples = [
-        ([["nomsy", "rover"]], 2),
-        ([["nomsy"]], 1)
-    ]
+    input_output_examples = [([["nomsy", "rover"]], 2), ([["nomsy"]], 1)]
 
     response_with_execution_error = """```python
 def count_good_dogs(dog_names: list[str]) -> int:
@@ -234,17 +235,31 @@ def count_good_dogs(dog_names: list[str]) -> int:
 ```    
 """
 
+    response_with_semantic_failure = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    return 2
+```    
+"""
+
+    response_with_correct_answer = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    return len(dog_names)
+```    
+"""
+
     completions = [
         [response_with_execution_error],
         [response_with_infinite_loop],
+        [response_with_semantic_failure],
+        [response_with_correct_answer],
     ]
     cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     llm = _MockLLM(completions, Path(cache_dir.name))
 
-    fn = synthesize_python_function_with_llm(llm, function_name, input_output_examples, prompt, timeout=2)
+    fn, success = synthesize_python_function_with_llm(
+        llm, function_name, input_output_examples, prompt, timeout=2
+    )
+    assert success
 
-    for input, output in input_output_examples:
-        assert fn(*input) == output
-
-if __name__ == '__main__':
-    test_synthesize_python_function_with_llm()  # TODO remove
+    for input_args, expected_output in input_output_examples:
+        assert fn.run(input_args) == expected_output
