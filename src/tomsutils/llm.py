@@ -536,6 +536,7 @@ class SynthesizedPythonFunction:
     """Wrapper around a Python function."""
 
     function_name: str
+    arg_index_to_space_var_name: str | None
     code_str: str
 
     @cached_property
@@ -546,9 +547,7 @@ class SynthesizedPythonFunction:
             f.write(self.code_str)
         return filename
 
-    def run(self, input_args: list[Any]) -> Any:
-        """Run the function on an input (that will be unpacked)."""
-        # Import get_plan().
+    def _load_module(self) -> Any:
         module_name = f"{self.filepath.stem}"
         spec = importlib.util.spec_from_file_location(module_name, self.filepath)
         assert spec is not None
@@ -557,8 +556,19 @@ class SynthesizedPythonFunction:
         assert module is not None
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
-        # Run the generalized plan.
+        return module
+
+    def run(self, input_args: list[Any]) -> Any:
+        """Run the function on an input (that will be unpacked)."""
+        module = self._load_module()
         return getattr(module, self.function_name)(*input_args)  # type: ignore  # pylint: disable=undefined-variable
+
+    def get_arg_index_to_space(self) -> dict[int, Space]:
+        """Get the arg_index_to_space proposed by the LLM for optimization."""
+        if self.arg_index_to_space_var_name is None:
+            return {}
+        module = self._load_module()
+        return getattr(module, self.arg_index_to_space_var_name)
 
 
 _PREVIOUS_SYNTHESIZED_PROMPT = string.Template(
@@ -672,9 +682,6 @@ class SynthesisInfo:
 class SynthesizedProgramArgumentOptimizer:
     """Optimizes certain arguments of a synthesized function."""
 
-    def __init__(self, arg_idx_to_space: dict[int, Space]):
-        self._arg_idx_to_space = arg_idx_to_space
-
     @abc.abstractmethod
     def optimize(
         self,
@@ -701,9 +708,11 @@ class SynthesizedProgramArgumentOptimizer:
                 score += 1
         return score
 
-    def get_optimized_args_from_input(self, input_args: list[Any]) -> dict[int, Any]:
+    def get_optimized_args_from_input(
+        self, input_args: list[Any], arg_index_to_space: dict[int, Space]
+    ) -> dict[int, Any]:
         """Extract optimized arguments from an input."""
-        return {idx: input_args[idx] for idx in self._arg_idx_to_space}
+        return {idx: input_args[idx] for idx in arg_index_to_space}
 
     def substitute_optimized_args(
         self, input_args: list[Any], optimized_args: dict[int, Any]
@@ -724,7 +733,9 @@ class NullSynthesizedProgramArgumentOptimizer(SynthesizedProgramArgumentOptimize
         input_output_examples: list[tuple[list[Any], Any]],
         outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     ) -> dict[int, Any]:
-        return self.get_optimized_args_from_input(input_output_examples[0][0])
+        return self.get_optimized_args_from_input(
+            input_output_examples[0][0], synthesized_function.get_arg_index_to_space()
+        )
 
 
 class GridSearchSynthesizedProgramArgumentOptimizer(
@@ -732,10 +743,11 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
 ):
     """Optimizes by running a grid search over Box spaces."""
 
-    def __init__(self, arg_idx_to_space: dict[int, Space], num_grid_steps: int = 11):
-        super().__init__(arg_idx_to_space)
+    def __init__(self, num_grid_steps: int = 11):
+        super().__init__()
+        self._num_grid_steps = num_grid_steps
 
-        # Set up the grid.
+    def _create_grid(self, arg_idx_to_space: dict[int, Space]) -> list[dict[int, Any]]:
         idx_to_grid = {}
         for arg_idx, box in arg_idx_to_space.items():
             assert isinstance(box, Box)
@@ -745,7 +757,9 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
                 )
 
             low, high = box.low, box.high
-            idx_to_grid[arg_idx] = np.linspace(low, high, num_grid_steps, endpoint=True)
+            idx_to_grid[arg_idx] = np.linspace(
+                low, high, self._num_grid_steps, endpoint=True
+            )
 
         # Collect the grids in ascending order of arg_idx.
         sorted_arg_indices = sorted(idx_to_grid.keys())
@@ -755,10 +769,11 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
         all_combinations = itertools.product(*grid_arrays)
 
         # For each combination, build the dictionary {arg_idx: value}.
-        self._grid = []
+        grid = []
         for combination in all_combinations:
             current_dict = dict(zip(sorted_arg_indices, combination))
-            self._grid.append(current_dict)
+            grid.append(current_dict)
+        return grid
 
     def optimize(
         self,
@@ -766,9 +781,10 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
         input_output_examples: list[tuple[list[Any], Any]],
         outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     ) -> dict[int, Any]:
+        arg_index_to_space = synthesized_function.get_arg_index_to_space()
         best_candidate: dict[int, Any] | None = None
         best_score = 1000000000
-        for candidate in self._grid:
+        for candidate in self._create_grid(arg_index_to_space):
             candidate_score = self.score(
                 candidate,
                 synthesized_function,
@@ -793,6 +809,7 @@ def synthesize_python_function_with_llm(
     previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
     outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     argument_optimizer: SynthesizedProgramArgumentOptimizer | None = None,
+    arg_index_to_space_var_name: str | None = None,
     timeout: int = 30,
     max_debug_attempts: int = 5,
     temperature: float = 0.0,
@@ -803,7 +820,7 @@ def synthesize_python_function_with_llm(
     The input output examples are each of the form (args, output).
     """
     if argument_optimizer is None:
-        argument_optimizer = NullSynthesizedProgramArgumentOptimizer({})
+        argument_optimizer = NullSynthesizedProgramArgumentOptimizer()
     prompt = initial_prompt
     synthesized_function: SynthesizedPythonFunction | None = None
     synthesis_info: SynthesisInfo | None = None
@@ -814,7 +831,7 @@ def synthesize_python_function_with_llm(
         python_function_str = parse_python_code_from_llm_response(response)
         python_function_str = code_prefix + python_function_str
         synthesized_function = SynthesizedPythonFunction(
-            function_name, python_function_str
+            function_name, arg_index_to_space_var_name, python_function_str
         )
         synthesis_info = optimize_llm_generated_python_function(
             synthesized_function,
@@ -889,7 +906,7 @@ def _optimize_llm_generated_python_function_no_timeout(
 
     # Initialize the optimization arguments using the first input-output example.
     result_dict["optimized_args"] = argument_optimizer.get_optimized_args_from_input(
-        input_output_examples[0][0]
+        input_output_examples[0][0], synthesized_function.get_arg_index_to_space()
     )
 
     # Run argument optimization.

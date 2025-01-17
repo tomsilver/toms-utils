@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from gymnasium.spaces import Box, Space
 from PIL import Image
 
 from tomsutils.llm import (
@@ -272,6 +271,7 @@ def test_synthesize_python_function_with_llm_optimize_arguments():
     """Tests synthesize_python_function_with_llm() with argument
     optimization."""
     function_name = "find_my_thresholds"
+    arg_index_to_space_var_name = "ARG_INDEX_TO_SPACE"
     prompt = """Generate a Python function of the form
     
 def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
@@ -283,13 +283,17 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
         (["rover", 0.5, 0.5], True),
     ]
 
-    arg_idx_to_space: dict[int, Space] = {
-        1: Box(0.0, 1.0, shape=tuple()),
-        2: Box(0.0, 1.0, shape=tuple()),
-    }
-    arg_optimizer = GridSearchSynthesizedProgramArgumentOptimizer(arg_idx_to_space)
+    arg_optimizer = GridSearchSynthesizedProgramArgumentOptimizer()
+    code_prefix = """from gymnasium.spaces import Box
+"""
 
     response = """```python
+
+ARG_INDEX_TO_SPACE = {
+    1: Box(0.0, 1.0, shape=tuple()),  # threshold1
+    2: Box(0.0, 1.0, shape=tuple()),  # threshold2
+}
+
 def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
     if dog_name == "nomsy":
         return threshold1 < 0.1
@@ -312,7 +316,9 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
         input_output_examples,
         prompt,
         timeout=2,
+        code_prefix=code_prefix,
         argument_optimizer=arg_optimizer,
+        arg_index_to_space_var_name=arg_index_to_space_var_name,
     )
     assert info.success
     assert info.optimized_args[1] < 0.1
