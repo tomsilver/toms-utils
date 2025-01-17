@@ -14,6 +14,7 @@ from tomsutils.llm import (
     OpenAILLM,
     OpenAIVLM,
     VisionLanguageModel,
+    synthesize_python_function_with_llm,
 )
 
 
@@ -29,6 +30,32 @@ class _DummyLLM(LargeLanguageModel):
             completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
         return completions
+
+    def get_multiple_choice_logprobs(
+        self, prompt: str, choices: list[str], seed: int
+    ) -> dict[str, float]:
+        raise NotImplementedError("TODO")
+
+
+class _MockLLM(LargeLanguageModel):
+
+    def __init__(
+        self,
+        completions: list[list[str]],
+        cache_dir: Path,
+        use_cache_only: bool = False,
+    ) -> None:
+        super().__init__(cache_dir, use_cache_only)
+        self.completions = completions
+
+    def get_id(self) -> str:
+        return "mock"
+
+    def _sample_completions(self, prompt, imgs, temperature, seed, num_completions=1):
+        del imgs  # unused.
+        next_completions = self.completions.pop(0)
+        assert num_completions == len(next_completions)
+        return list(next_completions)
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
@@ -179,3 +206,60 @@ def test_openai_vlm():
     # assert len(completions) == 3
     # for completion in completions:
     #     assert "Inside" in completion
+
+
+def test_synthesize_python_function_with_llm():
+    """Tests for synthesize_python_function_with_llm()."""
+    function_name = "count_good_dogs"
+    prompt = """Generate a Python function of the form
+    
+def count_good_dogs(dog_names: list[str]) -> int:
+    # your code here
+"""
+
+    input_output_examples = [([["nomsy", "rover"]], 2), ([["nomsy"]], 1)]
+
+    response_with_execution_error = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    tenth_dog = dog_names[10]
+    return 10
+```    
+"""
+
+    response_with_infinite_loop = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    num_good_dogs = 0
+    while True:
+        num_good_dogs += 1
+    return num_good_dogs
+```    
+"""
+
+    response_with_semantic_failure = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    return 2
+```    
+"""
+
+    response_with_correct_answer = """```python
+def count_good_dogs(dog_names: list[str]) -> int:
+    return len(dog_names)
+```    
+"""
+
+    completions = [
+        [response_with_execution_error],
+        [response_with_infinite_loop],
+        [response_with_semantic_failure],
+        [response_with_correct_answer],
+    ]
+    cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    llm = _MockLLM(completions, Path(cache_dir.name))
+
+    fn, success = synthesize_python_function_with_llm(
+        llm, function_name, input_output_examples, prompt, timeout=2
+    )
+    assert success
+
+    for input_args, expected_output in input_output_examples:
+        assert fn.run(input_args) == expected_output

@@ -2,12 +2,22 @@
 
 import abc
 import base64
+import importlib
 import json
 import logging
+import multiprocessing as mp
+import operator
 import os
+import signal
+import string
+import sys
+import tempfile
+import traceback
+from dataclasses import dataclass
+from functools import cached_property
 from io import BytesIO
 from pathlib import Path
-from typing import Collection
+from typing import Any, Callable, Collection
 
 import google.generativeai as genai
 import imagehash
@@ -513,3 +523,265 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
         self, prompt: str, choices: list[str], seed: int
     ) -> dict[str, float]:
         raise NotImplementedError("TODO")
+
+
+@dataclass(frozen=True)
+class SynthesizedPythonFunction:
+    """Wrapper around a Python function."""
+
+    function_name: str
+    code_str: str
+
+    @cached_property
+    def filepath(self) -> Path:
+        """Get a file with the code string implemented in it."""
+        filename = Path(tempfile.NamedTemporaryFile(delete=False, suffix=".py").name)
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(self.code_str)
+        return filename
+
+    def run(self, input_args: list[Any]) -> Any:
+        """Run the function on an input (that will be unpacked)."""
+        # Import get_plan().
+        module_name = f"{self.filepath.stem}"
+        spec = importlib.util.spec_from_file_location(module_name, self.filepath)
+        assert spec is not None
+        assert spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        assert module is not None
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        # Run the generalized plan.
+        return getattr(module, self.function_name)(*input_args)  # type: ignore  # pylint: disable=undefined-variable
+
+
+_PREVIOUS_SYNTHESIZED_PROMPT = string.Template(
+    """
+Previously, you synthesized this function:
+
+$function
+"""
+)
+
+
+def synthesize_python_function_with_llm(
+    llm: LargeLanguageModel,
+    function_name: str,
+    input_output_examples: list[tuple[list[Any], Any]],
+    initial_prompt: str,
+    previous_synthesized_prompt: string.Template = _PREVIOUS_SYNTHESIZED_PROMPT,
+    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    timeout: int = 30,
+    max_debug_attempts: int = 5,
+    temperature: float = 0.0,
+    seed: int = 0,
+) -> tuple[SynthesizedPythonFunction, bool]:
+    """Use an LLM to synthesize a python function.
+
+    The input output examples are each of the form (args, output).
+    """
+    prompt = initial_prompt
+    synthesized_function: SynthesizedPythonFunction | None = None
+    for _ in range(max_debug_attempts):
+        response = llm.sample_completions(
+            prompt, imgs=None, temperature=temperature, seed=seed
+        )[0]
+        python_function_str = parse_python_code_from_llm_response(response)
+        synthesized_function = SynthesizedPythonFunction(
+            function_name, python_function_str
+        )
+        validation_result = validate_llm_generated_python_function(
+            synthesized_function,
+            input_output_examples,
+            outputs_equal_check=outputs_equal_check,
+            timeout=timeout,
+        )
+        # Success!
+        if isinstance(validation_result, _PythonFunctionValidationSuccess):
+            return synthesized_function, True
+        # Failure, reprompt.
+        previous_prompt = previous_synthesized_prompt.substitute(function=response)
+        error_prompt = validation_result.get_prompt_addendum()
+        prompt = initial_prompt + previous_prompt + error_prompt
+    # If all debug attempts are exceeded, return the last program and report failure.
+    assert synthesized_function is not None
+    return synthesized_function, False
+
+
+class _PythonFunctionValidationSuccess:
+    """Indicates all checks passed."""
+
+
+@dataclass(frozen=True)
+class _PythonFunctionValidationFailure:
+    """Some check failed."""
+
+    input_args: list[Any]
+    expected_output: Any
+
+    @abc.abstractmethod
+    def get_prompt_addendum(self) -> str:
+        """Get a prompt to correct the program."""
+
+    def get_input_arg_str(self) -> str:
+        """Get a string representation of the input arguments."""
+        return ", ".join([str(x) for x in self.input_args])
+
+
+@dataclass(frozen=True)
+class _ExceptionPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
+    """An exception was raised while trying to execute the python function."""
+
+    traceback_str: str
+
+    def get_prompt_addendum(self) -> str:
+        return f"""Given these input arguments:
+
+{self.get_input_arg_str()}
+        
+the following exception was raised:
+        
+{self.traceback_str}
+
+Fix the code.
+"""
+
+
+@dataclass(frozen=True)
+class _TimeOutPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
+    """The code ran out of time while executing."""
+
+    def get_prompt_addendum(self) -> str:
+        return f"""Given these input arguments:
+
+{self.get_input_arg_str()}
+        
+the code timed out while executing. There may be an infinite loop.
+
+Fix the code.
+"""
+
+
+@dataclass(frozen=True)
+class _ExpectedOutputPythonFunctionValidationFailure(_PythonFunctionValidationFailure):
+    """The code produced an incorrect output."""
+
+    output: Any
+
+    def get_prompt_addendum(self) -> str:
+        return f"""Given these input arguments:
+
+{self.get_input_arg_str()}
+        
+the code produced this output:
+
+{self.output}
+
+but the following output was expected:
+
+{self.expected_output}
+
+Fix the code.
+"""
+
+
+_PythonFunctionValidationResult = (
+    _PythonFunctionValidationSuccess | _PythonFunctionValidationFailure
+)
+
+
+def validate_llm_generated_python_function(
+    synthesized_function: SynthesizedPythonFunction,
+    input_output_examples: list[tuple[list[Any], Any]],
+    outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    timeout: int = 30,
+) -> _PythonFunctionValidationResult:
+    """Check for execution errors, timeouts, and input-output failures."""
+    for input_args, expected_output in input_output_examples:
+        # Handle possible timeouts.
+        manager = mp.Manager()
+        result_proxy_dict = manager.dict()
+        p = mp.Process(
+            target=_run_llm_generated_python_function_no_timeout,
+            args=(
+                synthesized_function,
+                input_args,
+                expected_output,
+                outputs_equal_check,
+                result_proxy_dict,
+            ),
+        )
+        p.start()
+        p.join(timeout)
+        # Timeout reached.
+        if p.is_alive():
+            # Treated like a KeyboardInterrupt.
+            assert p.pid is not None
+            os.kill(p.pid, signal.SIGINT)
+            # Give it a few more seconds then kill for good.
+            p.join(3)
+            p.kill()
+            # Return timeout.
+            return _TimeOutPythonFunctionValidationFailure(input_args, expected_output)
+
+        # Did not time out.
+        result_dict = dict(result_proxy_dict)
+        validation_result: _PythonFunctionValidationResult = result_dict[
+            "validation_result"
+        ]
+        if isinstance(validation_result, _PythonFunctionValidationSuccess):
+            continue
+        return validation_result
+
+    # Passed all checks!
+    return _PythonFunctionValidationSuccess()
+
+
+def _run_llm_generated_python_function_no_timeout(
+    synthesized_function: SynthesizedPythonFunction,
+    input_args: list[Any],
+    expected_output: Any,
+    outputs_equal_check: Callable[[Any, Any], bool],
+    result_dict: dict,
+) -> None:
+    try:
+        output = synthesized_function.run(input_args)
+    except BaseException as e:  # pylint: disable=broad-exception-caught
+        tb = traceback.format_exception(e)
+        tb_lines = [
+            l.replace(str(synthesized_function.filepath), "<file-name-omitted>")
+            for l in tb
+            if "tomsutils" not in l
+        ]
+        tb_str = "".join(tb_lines)
+        result_dict["validation_result"] = _ExceptionPythonFunctionValidationFailure(
+            input_args, expected_output, tb_str
+        )
+        return
+    # An output was received, so compare it with the expected output.
+    if outputs_equal_check(output, expected_output):
+        # Success!
+        result: _PythonFunctionValidationResult = _PythonFunctionValidationSuccess()
+    # Failure.
+    else:
+        result = _ExpectedOutputPythonFunctionValidationFailure(
+            input_args, expected_output, output
+        )
+    result_dict["validation_result"] = result
+    return
+
+
+def parse_python_code_from_llm_response(response: str) -> str:
+    """Parse Python code from an LLM response, assuming ```python tag."""
+    # Parse out python code if it exists.
+    python_code_prefix = "```python"
+    if python_code_prefix in response:
+        python_start = response.index(python_code_prefix)
+        python_remainder = response[python_start + len(python_code_prefix) :]
+        if "```" in python_remainder:
+            python_end = python_remainder.index("```")
+        else:
+            python_end = len(python_remainder)
+        python_response = python_remainder[:python_end]
+        return python_response
+    return response
