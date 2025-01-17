@@ -3,6 +3,7 @@
 import abc
 import base64
 import importlib
+import itertools
 import json
 import logging
 import multiprocessing as mp
@@ -21,6 +22,7 @@ from typing import Any, Callable, Collection
 
 import google.generativeai as genai
 import imagehash
+import numpy as np
 import openai
 import PIL.Image
 from gymnasium.spaces import Box, Space
@@ -682,6 +684,23 @@ class SynthesizedProgramArgumentOptimizer:
     ) -> dict[int, Any]:
         """Run optimization."""
 
+    def score(
+        self,
+        candidate: dict[int, Any],
+        synthesized_function: SynthesizedPythonFunction,
+        input_output_examples: list[tuple[list[Any], Any]],
+        outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
+    ) -> int:
+        """Get the score (lower is better and zero is perfect)."""
+        # Exceptions should be caught externally.
+        score = 0
+        for input_args, expected_output in input_output_examples:
+            input_args = self.substitute_optimized_args(input_args, candidate)
+            output = synthesized_function.run(input_args)
+            if not outputs_equal_check(output, expected_output):
+                score += 1
+        return score
+
     def get_optimized_args_from_input(self, input_args: list[Any]) -> dict[int, Any]:
         """Extract optimized arguments from an input."""
         return {idx: input_args[idx] for idx in self._arg_idx_to_space}
@@ -715,7 +734,31 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
 
     def __init__(self, arg_idx_to_space: dict[int, Space], num_grid_steps: int = 10):
         super().__init__(arg_idx_to_space)
-        assert all(isinstance(space, Box) for space in arg_idx_to_space.values())
+
+        # Set up the grid.
+        idx_to_grid = {}
+        for arg_idx, box in arg_idx_to_space.items():
+            assert isinstance(box, Box)
+            if box.shape != tuple():
+                raise ValueError(
+                    f"Box at index {arg_idx} must be 1D (shape=(,)), got {box.shape}."
+                )
+
+            low, high = box.low, box.high
+            idx_to_grid[arg_idx] = np.linspace(low, high, num_grid_steps, endpoint=True)
+
+        # Collect the grids in ascending order of arg_idx.
+        sorted_arg_indices = sorted(idx_to_grid.keys())
+        grid_arrays = [idx_to_grid[idx] for idx in sorted_arg_indices]
+
+        # Cartesian product of all grids.
+        all_combinations = itertools.product(*grid_arrays)
+
+        # For each combination, build the dictionary {arg_idx: value}.
+        self._grid = []
+        for combination in all_combinations:
+            current_dict = dict(zip(sorted_arg_indices, combination))
+            self._grid.append(current_dict)
 
     def optimize(
         self,
@@ -723,7 +766,22 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
         input_output_examples: list[tuple[list[Any], Any]],
         outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     ) -> dict[int, Any]:
-        return {1: 0.05, 2: 0.95}  # TODO
+        best_candidate: dict[int, Any] | None = None
+        best_score = 1000000000
+        for candidate in self._grid:
+            candidate_score = self.score(
+                candidate,
+                synthesized_function,
+                input_output_examples,
+                outputs_equal_check,
+            )
+            if candidate_score < best_score:
+                best_candidate = candidate
+                best_score = candidate_score
+            if candidate_score == 0:
+                break  # early termination
+        assert best_candidate is not None
+        return best_candidate
 
 
 def synthesize_python_function_with_llm(
