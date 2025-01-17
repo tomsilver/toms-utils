@@ -567,6 +567,14 @@ $function
 )
 
 
+@dataclass(frozen=True)
+class SynthesisInfo:
+    """Additional info returned along with a synthesized program."""
+
+    success: bool
+    optimized_args: dict[int, Any]  # arg index to value
+
+
 def synthesize_python_function_with_llm(
     llm: LargeLanguageModel,
     function_name: str,
@@ -579,7 +587,7 @@ def synthesize_python_function_with_llm(
     max_debug_attempts: int = 5,
     temperature: float = 0.0,
     seed: int = 0,
-) -> tuple[SynthesizedPythonFunction, bool]:
+) -> tuple[SynthesizedPythonFunction, SynthesisInfo]:
     """Use an LLM to synthesize a python function.
 
     The input output examples are each of the form (args, output).
@@ -603,14 +611,16 @@ def synthesize_python_function_with_llm(
         )
         # Success!
         if isinstance(validation_result, _PythonFunctionValidationSuccess):
-            return synthesized_function, True
+            info = SynthesisInfo(success=True, optimized_args={})
+            return synthesized_function, info
         # Failure, reprompt.
         previous_prompt = previous_synthesized_prompt.substitute(function=response)
         error_prompt = validation_result.get_prompt_addendum()
         prompt = initial_prompt + previous_prompt + error_prompt
     # If all debug attempts are exceeded, return the last program and report failure.
     assert synthesized_function is not None
-    return synthesized_function, False
+    info = SynthesisInfo(success=False, optimized_args={})
+    return synthesized_function, info
 
 
 class _PythonFunctionValidationSuccess:

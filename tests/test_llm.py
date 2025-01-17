@@ -263,3 +263,44 @@ def count_good_dogs(dog_names: list[str]) -> int:
 
     for input_args, expected_output in input_output_examples:
         assert fn.run(input_args) == expected_output
+
+
+def test_synthesize_python_function_with_llm_optimize_arguments():
+    """Tests synthesize_python_function_with_llm() with argument optimization."""
+    function_name = "find_my_thresholds"
+    prompt = """Generate a Python function of the form
+    
+def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
+    # your code here
+"""
+
+    input_output_examples = [
+        (("nomsy", 0.5, 0.5), True),
+        (("rover", 0.5, 0.5), True),
+    ]
+
+    response = """```python
+def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> bool:
+    if dog_name == "nomsy":
+        return threshold1 < 0.1
+    if dog_name == "rover":
+        return threshold2 > 0.9
+    raise NotImplementedError
+```    
+"""
+
+    completions = [
+        [response],
+    ]
+    cache_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    llm = _MockLLM(completions, Path(cache_dir.name))
+
+    fn, info = synthesize_python_function_with_llm(
+        llm, function_name, input_output_examples, prompt, timeout=2
+    )
+    assert info.success
+    assert info.optimized_args[0] < 0.1
+    assert info.optimized_args[1] > 0.9
+
+    for input_args, expected_output in input_output_examples:
+        assert fn.run(input_args) == expected_output
