@@ -329,3 +329,18 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
             input_args, info.optimized_args
         )
         assert fn.run(input_args) == expected_output
+
+    final_code_str = fn.create_code_str_from_arg_values(info.optimized_args)
+    assert (
+        final_code_str
+        == """from gymnasium.spaces import Box
+
+def find_my_thresholds(dog_name: str) -> bool:
+    threshold1 = 0.0
+    threshold2 = 1.0
+    if dog_name == 'nomsy':
+        return threshold1 < 0.1
+    if dog_name == 'rover':
+        return threshold2 > 0.9
+    raise NotImplementedError"""
+    )
