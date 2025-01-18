@@ -865,7 +865,8 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
         # For each combination, build the dictionary {arg_idx: value}.
         grid = []
         for combination in all_combinations:
-            current_dict = dict(zip(sorted_arg_indices, combination))
+            float_combo = [float(x) for x in combination]
+            current_dict = dict(zip(sorted_arg_indices, float_combo))
             grid.append(current_dict)
         return grid
 
