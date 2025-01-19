@@ -560,10 +560,18 @@ class SynthesizedPythonFunction:
         spec.loader.exec_module(module)
         return module
 
-    def run(self, input_args: list[Any]) -> Any:
+    def run(
+        self, input_args: list[Any], optimized_args: dict[int, Any] | None = None
+    ) -> Any:
         """Run the function on an input (that will be unpacked)."""
         module = self._load_module()
-        return getattr(module, self.function_name)(*input_args)  # type: ignore  # pylint: disable=undefined-variable
+        fn = getattr(module, self.function_name)
+        input_args = list(input_args)
+        if optimized_args is not None:
+            for idx in sorted(optimized_args):
+                assert idx == len(input_args)  # need to handle this later...
+                input_args.append(optimized_args[idx])
+        return fn(*input_args)  # type: ignore  # pylint: disable=undefined-variable
 
     def get_arg_index_to_space(self) -> dict[int, Space]:
         """Get the arg_index_to_space proposed by the LLM for optimization."""
@@ -785,6 +793,12 @@ class SynthesizedProgramArgumentOptimizer:
     ) -> dict[int, Any]:
         """Run optimization."""
 
+    @abc.abstractmethod
+    def get_initialization(
+        self, synthesized_function: SynthesizedPythonFunction
+    ) -> dict[int, Any]:
+        """Get an initialization for the unknown parameters."""
+
     def score(
         self,
         candidate: dict[int, Any],
@@ -796,26 +810,10 @@ class SynthesizedProgramArgumentOptimizer:
         # Exceptions should be caught externally.
         score = 0
         for input_args, expected_output in input_output_examples:
-            input_args = self.substitute_optimized_args(input_args, candidate)
-            output = synthesized_function.run(input_args)
+            output = synthesized_function.run(input_args, optimized_args=candidate)
             if not outputs_equal_check(output, expected_output):
                 score += 1
         return score
-
-    def get_optimized_args_from_input(
-        self, input_args: list[Any], arg_index_to_space: dict[int, Space]
-    ) -> dict[int, Any]:
-        """Extract optimized arguments from an input."""
-        return {idx: input_args[idx] for idx in arg_index_to_space}
-
-    def substitute_optimized_args(
-        self, input_args: list[Any], optimized_args: dict[int, Any]
-    ) -> list[Any]:
-        """Run substitution."""
-        new_args = list(input_args)
-        for idx, value in optimized_args.items():
-            new_args[idx] = value
-        return new_args
 
 
 class NullSynthesizedProgramArgumentOptimizer(SynthesizedProgramArgumentOptimizer):
@@ -827,9 +825,13 @@ class NullSynthesizedProgramArgumentOptimizer(SynthesizedProgramArgumentOptimize
         input_output_examples: list[tuple[list[Any], Any]],
         outputs_equal_check: Callable[[Any, Any], bool] = operator.eq,
     ) -> dict[int, Any]:
-        return self.get_optimized_args_from_input(
-            input_output_examples[0][0], synthesized_function.get_arg_index_to_space()
-        )
+        return self.get_initialization(synthesized_function)
+
+    def get_initialization(
+        self, synthesized_function: SynthesizedPythonFunction
+    ) -> dict[int, Any]:
+        assert not synthesized_function.get_arg_index_to_space()
+        return {}
 
 
 class GridSearchSynthesizedProgramArgumentOptimizer(
@@ -893,6 +895,16 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
                 break  # early termination
         assert best_candidate is not None
         return best_candidate
+
+    def get_initialization(
+        self, synthesized_function: SynthesizedPythonFunction
+    ) -> dict[int, Any]:
+        init: dict[int, Any] = {}
+        for idx, box in synthesized_function.get_arg_index_to_space().items():
+            assert isinstance(box, Box) and box.shape == tuple()
+            v = float(np.mean([box.low, box.high]))
+            init[idx] = v
+        return init
 
 
 def synthesize_python_function_with_llm(
@@ -1000,8 +1012,8 @@ def _optimize_llm_generated_python_function_no_timeout(
 ) -> None:
 
     # Initialize the optimization arguments using the first input-output example.
-    result_dict["optimized_args"] = argument_optimizer.get_optimized_args_from_input(
-        input_output_examples[0][0], synthesized_function.get_arg_index_to_space()
+    result_dict["optimized_args"] = argument_optimizer.get_initialization(
+        synthesized_function
     )
 
     # Run argument optimization.
@@ -1014,13 +1026,10 @@ def _optimize_llm_generated_python_function_no_timeout(
         pass  # raise the failure below instead because we don't know input idx
 
     # This might be redundant; look into refactoring.
-    optimize_args = result_dict["optimized_args"]
+    optimized_args = result_dict["optimized_args"]
     for input_args, expected_output in input_output_examples:
-        input_args = argument_optimizer.substitute_optimized_args(
-            input_args, optimize_args
-        )
         try:
-            output = synthesized_function.run(input_args)
+            output = synthesized_function.run(input_args, optimized_args=optimized_args)
         except BaseException as e:  # pylint: disable=broad-exception-caught
             result_dict["validation_result"] = _get_validation_failure_from_exception(
                 e, input_args, synthesized_function

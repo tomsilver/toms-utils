@@ -279,8 +279,8 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
 """
 
     input_output_examples: list[tuple[list[Any], Any]] = [
-        (["nomsy", 0.5, 0.5], True),
-        (["rover", 0.5, 0.5], True),
+        (["nomsy"], True),
+        (["rover"], True),
     ]
 
     arg_optimizer = GridSearchSynthesizedProgramArgumentOptimizer()
@@ -325,10 +325,8 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
     assert info.optimized_args[2] > 0.9
 
     for input_args, expected_output in input_output_examples:
-        input_args = arg_optimizer.substitute_optimized_args(
-            input_args, info.optimized_args
-        )
-        assert fn.run(input_args) == expected_output
+        output = fn.run(input_args, optimized_args=info.optimized_args)
+        assert output == expected_output
 
     final_code_str = fn.create_code_str_from_arg_values(info.optimized_args)
     workspace = locals().copy()
