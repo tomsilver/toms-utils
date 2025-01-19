@@ -1,6 +1,7 @@
 """Interfaces and utilities for large language models."""
 
 import abc
+import ast
 import base64
 import importlib
 import itertools
@@ -14,6 +15,7 @@ import string
 import sys
 import tempfile
 import traceback
+from ast import unparse as ast_unparse
 from dataclasses import dataclass
 from functools import cached_property
 from io import BytesIO
@@ -570,6 +572,98 @@ class SynthesizedPythonFunction:
         module = self._load_module()
         return getattr(module, self.arg_index_to_space_var_name)
 
+    def create_code_str_from_arg_values(self, arg_idx_to_value: dict[int, Any]) -> str:
+        """Create a code string where the arguments of the function are
+        replaced with the given values.
+
+        For example, if self.code_str is
+
+        ```
+        import numpy as np
+
+        ARG_TO_INDEX = {
+            1: Box(0, 1, shape=tuple()),
+            2: Box(0, 1, shape=tuple()),
+        }
+
+        def custom_function(x, y, z):
+            return x + y + z
+        ```
+
+        and arg_idx_to_value = {1: 0.5, 2: 0.1}, then this method would return
+
+        ```
+        import numpy as np
+
+        def custom_function(x):
+            y = 0.5
+            z = 0.1
+            return x + y + z
+        ```
+        """
+        try:
+            tree = ast.parse(self.code_str)
+        except SyntaxError:
+            # If the original code can't be parsed, just return it unchanged.
+            return self.code_str
+
+        # 1) Remove any top-level assignment to ARG_TO_INDEX.
+        new_body = []
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == self.arg_index_to_space_var_name
+            ):
+                # Skip this node to remove it from the tree
+                continue
+            new_body.append(node)
+        tree.body = new_body
+
+        # 2) Find the function definition with name == self.function_name.
+        func_def = None
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == self.function_name:
+                func_def = node
+                break
+
+        if func_def is None:
+            # If the function isn't found, return the original.
+            return ast_unparse(tree)
+
+        # 3) Build a map from argument index -> argument name
+        arg_names = [arg.arg for arg in func_def.args.args]
+
+        # 4) Remove the arguments that appear in arg_idx_to_value from the function
+        #    signature. We treat the function arguments as 0-based in order here.
+        kept_args = []
+        for idx, arg in enumerate(func_def.args.args):
+            if idx not in arg_idx_to_value:
+                kept_args.append(arg)
+        func_def.args.args = kept_args
+
+        # 5) Prepend assignments of the form `name = value` to the function body.
+        assignment_nodes = []
+        for idx, val in sorted(arg_idx_to_value.items()):
+            # Only add assignments if idx is valid for the original arg list.
+            if idx < len(arg_names):
+                param_name = arg_names[idx]
+                # Turn `param_name = val` into an AST node.
+                assign_ast = ast.parse(f"{param_name} = {repr(val)}").body[0]
+                assignment_nodes.append(assign_ast)
+
+        func_def.body = assignment_nodes + func_def.body
+
+        # 6) Convert the modified AST back to code.
+        try:
+            new_code_str = ast_unparse(tree)
+        except Exception:
+            # If unparse fails for any reason, fall back to original code.
+            new_code_str = ast_unparse(ast.fix_missing_locations(tree))
+
+        return new_code_str
+
 
 _PREVIOUS_SYNTHESIZED_PROMPT = string.Template(
     """
@@ -771,7 +865,8 @@ class GridSearchSynthesizedProgramArgumentOptimizer(
         # For each combination, build the dictionary {arg_idx: value}.
         grid = []
         for combination in all_combinations:
-            current_dict = dict(zip(sorted_arg_indices, combination))
+            float_combo = [float(x) for x in combination]
+            current_dict = dict(zip(sorted_arg_indices, float_combo))
             grid.append(current_dict)
         return grid
 

@@ -329,3 +329,11 @@ def find_my_thresholds(dog_name: str, threshold1: float, threshold2: float) -> b
             input_args, info.optimized_args
         )
         assert fn.run(input_args) == expected_output
+
+    final_code_str = fn.create_code_str_from_arg_values(info.optimized_args)
+    workspace = locals().copy()
+    exec(final_code_str, workspace)  # pylint:disable=exec-used
+    assert "find_my_thresholds" in workspace
+    find_my_thresholds = workspace["find_my_thresholds"]
+    assert find_my_thresholds("nomsy")
+    assert find_my_thresholds("rover")
