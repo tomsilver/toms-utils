@@ -31,11 +31,11 @@ class _DummyLLM(LargeLanguageModel):
         for _ in range(num_completions):
             completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
-        return completions
+        return completions, {}
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError("TODO")
 
 
@@ -57,11 +57,11 @@ class _MockLLM(LargeLanguageModel):
         del imgs  # unused.
         next_completions = self.completions.pop(0)
         assert num_completions == len(next_completions)
-        return list(next_completions)
+        return list(next_completions), {}
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError("TODO")
 
 
@@ -76,11 +76,11 @@ class _DummyVLM(VisionLanguageModel):
         for _ in range(num_completions):
             completion = f"Prompt: {prompt}. Seed: {seed}. " f"Temp: {temperature:.1f}."
             completions.append(completion)
-        return completions
+        return completions, {}
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError
 
 
@@ -90,14 +90,14 @@ def test_large_language_model():
     # Query a dummy LLM.
     llm = _DummyLLM(Path(cache_dir.name))
     assert llm.get_id() == "dummy"
-    completions = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
+    completions, _ = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
     expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5."
     assert completions == [expected_completion] * 3
     # Query it again, covering the case where we load from disk.
-    completions = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
+    completions, _ = llm.sample_completions("Hello!", None, 0.5, 123, num_completions=3)
     assert completions == [expected_completion] * 3
     # Query with temperature 0.
-    completions = llm.sample_completions("Hello!", None, 0.0, 123, num_completions=3)
+    completions, _ = llm.sample_completions("Hello!", None, 0.0, 123, num_completions=3)
     expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.0."
     assert completions == [expected_completion] * 3
     # Clean up the cache dir.
@@ -105,7 +105,7 @@ def test_large_language_model():
     # Test llm_use_cache_only.
     llm = _DummyLLM(Path(cache_dir.name), use_cache_only=True)
     with pytest.raises(ValueError) as e:
-        completions = llm.sample_completions(
+        completions, _ = llm.sample_completions(
             "Hello!", None, 0.5, 123, num_completions=3
         )
     assert "No cached response found for prompt." in str(e)
@@ -118,7 +118,7 @@ def test_vision_language_model():
     vlm = _DummyVLM(Path(cache_dir.name))
     assert vlm.get_id() == "dummy"
     dummy_img = Image.new("RGB", (100, 100))
-    completions = vlm.sample_completions(
+    completions, _ = vlm.sample_completions(
         "Hello!", [dummy_img], 0.5, 123, num_completions=1
     )
     expected_completion = "Prompt: Hello!. Seed: 123. Temp: 0.5."

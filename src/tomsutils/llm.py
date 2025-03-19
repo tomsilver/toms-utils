@@ -35,12 +35,6 @@ from tomsutils.utils import consistent_hash
 # This speeds up the sandbox for code synthesis by a lot.
 mp.set_start_method("fork")
 
-# This is a special string that we assume will never appear in a prompt, and
-# which we use to separate prompt and completion in the cache. The reason to
-# do it this way, rather than saving the prompt and responses separately,
-# is that we want it to be easy to browse the cache as text files.
-_CACHE_SEP = "\n####$$$###$$$####$$$$###$$$####$$$###$$$###\n"
-
 
 class PretrainedLargeModel(abc.ABC):
     """A pretrained large vision or language model."""
@@ -67,7 +61,7 @@ class PretrainedLargeModel(abc.ABC):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         """This is the main method that subclasses must implement.
 
         This helper method is called by sample_completions(), which
@@ -82,8 +76,8 @@ class PretrainedLargeModel(abc.ABC):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
-        """Sample one or more completions from a prompt.
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Sample one or more completions from a prompt; also return metadata.
 
         Higher temperatures will increase the variance in the responses.
         The seed may not be used and the results may therefore not be
@@ -91,57 +85,70 @@ class PretrainedLargeModel(abc.ABC):
         that does not expose the ability to set a random seed. Responses
         are saved to disk.
         """
-        cache_filepath = self._get_cache_filepath(
-            prompt, imgs, temperature, seed, num_completions, filename="prompt.txt"
+        cache_dir = self._get_cache_dir(
+            prompt,
+            imgs,
+            temperature,
+            seed,
+            num_completions,
         )
-        if not cache_filepath.exists():
+        if not (cache_dir / "prompt.txt").exists():
             if self._use_cache_only:
                 raise ValueError("No cached response found for prompt.")
             logging.debug(f"Querying model {self.get_id()} with new prompt.")
             # Query the model.
-            completions = self._sample_completions(
+            completions, metadata = self._sample_completions(
                 prompt, imgs, temperature, seed, num_completions
             )
-            # Cache the completion.
-            cache_str = prompt + _CACHE_SEP + _CACHE_SEP.join(completions)
-            with open(cache_filepath, "w", encoding="utf-8") as f:
-                f.write(cache_str)
+            # Cache the text prompt.
+            prompt_file = cache_dir / "prompt.txt"
+            with open(prompt_file, "w", encoding="utf-8") as f:
+                f.write(prompt)
+            # Cache the image prompt if it exists.
             if imgs is not None:
-                # Also save the images for easy debugging.
-                imgs_folderpath = cache_filepath.parent / "imgs"
+                imgs_folderpath = cache_dir / "imgs"
                 os.makedirs(imgs_folderpath, exist_ok=True)
                 for i, img in enumerate(imgs):
                     filename_suffix = str(i) + ".jpg"
-                    img.save(os.path.join(imgs_folderpath, filename_suffix))
-            logging.debug(f"Saved model response to {cache_filepath}.")
-        # Load the saved completion.
-        with open(cache_filepath, "r", encoding="utf-8") as f:
-            cache_str = f.read()
-        logging.debug(f"Loaded model response from {cache_filepath}.")
-        assert cache_str.count(_CACHE_SEP) == num_completions
-        cached_prompt, completion_strs = cache_str.split(_CACHE_SEP, 1)
-        assert cached_prompt == prompt
-        completions = completion_strs.split(_CACHE_SEP)
-        return completions
+                    img.save(imgs_folderpath / filename_suffix)
+            # Cache each response.
+            for i, completion in enumerate(completions):
+                completion_file = cache_dir / f"completion_{i}.txt"
+                with open(completion_file, "w", encoding="utf-8") as f:
+                    f.write(completion)
+            # Cache the metadata.
+            metadata_file = cache_dir / "metadata.json"
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(metadata, f)
+            logging.debug(f"Saved model response to {cache_dir}.")
+        # Load the saved completions.
+        completions = []
+        for i in range(num_completions):
+            completion_file = cache_dir / f"completion_{i}.txt"
+            with open(completion_file, "r", encoding="utf-8") as f:
+                completions.append(f.read())
+        # Load the metadata.
+        metadata_file = cache_dir / "metadata.json"
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        logging.debug(f"Loaded model response from {cache_dir}.")
+        return completions, metadata
 
     @abc.abstractmethod
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         """Return log probabilities for a multiple choice question."""
 
-    def _get_cache_filepath(
+    def _get_cache_dir(
         self,
         prompt: str,
         imgs: list[PIL.Image.Image] | None,
         temperature: float,
         seed: int,
         num_completions: int = 1,
-        filename: str = "prompt.txt",
     ) -> Path:
-
-        # Set up the cache file.
-        assert _CACHE_SEP not in prompt
+        # Set up the cache directory.
         os.makedirs(self._cache_dir, exist_ok=True)
         model_id = self.get_id()
         prompt_id = consistent_hash(prompt)
@@ -165,7 +172,7 @@ class PretrainedLargeModel(abc.ABC):
             cache_foldername += f"{imgs_id}"
         cache_folderpath = self._cache_dir / cache_foldername
         os.makedirs(cache_folderpath, exist_ok=True)
-        return cache_folderpath / filename
+        return cache_folderpath
 
 
 class VisionLanguageModel(PretrainedLargeModel):
@@ -178,7 +185,7 @@ class VisionLanguageModel(PretrainedLargeModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         assert imgs is not None
         return super().sample_completions(
             prompt, imgs, temperature, seed, num_completions
@@ -195,11 +202,21 @@ class LargeLanguageModel(PretrainedLargeModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         assert imgs is None
         return super().sample_completions(
             prompt, imgs, temperature, seed, num_completions
         )
+
+    def query(
+        self,
+        prompt: str,
+        temperature: float,
+        seed: int,
+        num_completions: int = 1,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Short-hand that doesn't include images."""
+        return self.sample_completions(prompt, None, temperature, seed, num_completions)
 
 
 class OpenAIModel:
@@ -290,8 +307,8 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
-        del imgs  # unused
+    ) -> tuple[list[str], dict[str, Any]]:
+        assert imgs is None
         messages = [{"role": "user", "content": prompt, "type": "text"}]
         responses = [
             self.call_openai_api(
@@ -303,11 +320,12 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
             )
             for _ in range(num_completions)
         ]
-        return responses
+        metadata: dict[str, Any] = {}  # TODO
+        return responses, metadata
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         """Return log probabilities for a multiple choice question."""
         choices_prompt = "\n".join([f"{i+1}. {c}" for i, c in enumerate(choices)])
         extended_prompt = f"""{prompt}
@@ -318,13 +336,13 @@ Choices:
 {choices_prompt}
 """
         # Handle caching: use JSON format for this.
-        cache_filepath = self._get_cache_filepath(
+        cache_dir = self._get_cache_dir(
             prompt=extended_prompt,
             imgs=None,
             temperature=0.0,
             seed=seed,
-            filename="multiple_choice.json",
         )
+        cache_filepath = cache_dir / "multiple_choice.json"
 
         if not cache_filepath.exists():
             logging.debug(f"Querying model {self.get_id()} with new prompt.")
@@ -358,7 +376,8 @@ Choices:
             logging.debug(f"Saved model response to {cache_filepath}.")
         with open(cache_filepath, "r", encoding="utf-8") as fp:
             choice_to_logprob = json.load(fp)["logprobs"]
-        return choice_to_logprob
+        metadata: dict[str, Any] = {}  # TODO
+        return choice_to_logprob, metadata
 
 
 class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
@@ -382,7 +401,7 @@ class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         del seed  # unused
         assert imgs is None
         generation_config = genai.types.GenerationConfig(  # pylint:disable=no-member
@@ -392,14 +411,15 @@ class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
             [prompt], generation_config=generation_config
         )  # type: ignore
         response.resolve()
-        return [response.text]
+        metadata: dict[str, Any] = {}  # nothing saved for now
+        return [response.text], metadata
 
     def get_id(self) -> str:
         return f"Google-{self._model_name}"
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError("TODO")
 
 
@@ -424,7 +444,7 @@ class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         del seed  # unused
         assert imgs is not None
         generation_config = genai.types.GenerationConfig(  # pylint:disable=no-member
@@ -434,14 +454,15 @@ class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
             [prompt] + imgs, generation_config=generation_config
         )  # type: ignore
         response.resolve()
-        return [response.text]
+        metadata: dict[str, Any] = {}  # nothing saved for now
+        return [response.text], metadata
 
     def get_id(self) -> str:
         return f"Google-{self._model_name}"
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError("TODO")
 
 
@@ -508,7 +529,7 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
         temperature: float,
         seed: int,
         num_completions: int = 1,
-    ) -> list[str]:
+    ) -> tuple[list[str], dict[str, Any]]:
         """Query the model and get responses."""
         del seed  # unused.
         if imgs is None:
@@ -525,11 +546,12 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
             )
             for _ in range(num_completions)
         ]
-        return responses
+        metadata: dict[str, Any] = {}  # nothing saved for now
+        return responses, metadata
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
-    ) -> dict[str, float]:
+    ) -> tuple[dict[str, float], dict[str, Any]]:
         raise NotImplementedError("TODO")
 
 
@@ -932,9 +954,10 @@ def synthesize_python_function_with_llm(
     synthesized_function: SynthesizedPythonFunction | None = None
     synthesis_info: SynthesisInfo | None = None
     for _ in range(max_debug_attempts):
-        response = llm.sample_completions(
+        responses, _ = llm.sample_completions(
             prompt, imgs=None, temperature=temperature, seed=seed
-        )[0]
+        )
+        response = responses[0]
         python_function_str = parse_python_code_from_llm_response(response)
         python_function_str = code_prefix + python_function_str
         synthesized_function = SynthesizedPythonFunction(
