@@ -416,7 +416,7 @@ class GoogleGeminiLLM(LargeLanguageModel, GoogleGeminiModel):
         response = self._model.generate_content(
             [prompt], generation_config=generation_config
         )  # type: ignore
-        response.resolve()
+        response.resolve()  # type: ignore
         metadata: dict[str, Any] = {}  # nothing saved for now
         return [response.text], metadata
 
@@ -457,9 +457,9 @@ class GoogleGeminiVLM(VisionLanguageModel, GoogleGeminiModel):
             candidate_count=num_completions, temperature=temperature
         )
         response = self._model.generate_content(
-            [prompt] + imgs, generation_config=generation_config
-        )  # type: ignore
-        response.resolve()
+            [prompt] + imgs, generation_config=generation_config  # type: ignore
+        )
+        response.resolve()  # type: ignore
         metadata: dict[str, Any] = {}  # nothing saved for now
         return [response.text], metadata
 
