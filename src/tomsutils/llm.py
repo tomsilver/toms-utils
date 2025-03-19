@@ -214,10 +214,8 @@ class LargeLanguageModel(PretrainedLargeModel):
         temperature: float,
         seed: int,
     ) -> tuple[str, dict[str, Any]]:
-        """Short-hand that assumes 1 completoin and doesn't include images."""
-        responses, metadata = self.sample_completions(prompt, None, temperature, seed)[
-            0
-        ]
+        """Short-hand that assumes 1 completion and doesn't include images."""
+        responses, metadata = self.sample_completions(prompt, None, temperature, seed)
         assert len(responses) == 1
         return responses[0], metadata
 
