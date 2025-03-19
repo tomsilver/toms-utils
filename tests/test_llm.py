@@ -137,23 +137,27 @@ def test_openai_llm():
     assert llm.get_id() == "openai-gpt-4o-mini"
     # Uncomment this to test manually, but do NOT uncomment in master, because
     # each query costs money.
-    # completions = llm.sample_completions("Hi",
+    # completions, metadata = llm.sample_completions("Hi",
     #                                      None,
     #                                      0.5,
     #                                      123,
-    #                                      num_completions=2)
-    # assert len(completions) == 2
-    # completions2 = llm.sample_completions("Hi",
+    #                                      num_completions=1)
+    # assert len(completions) == 1
+    # assert metadata["completion_tokens"] == 10
+    # assert metadata["prompt_tokens"] == 8
+    # completions2, _ = llm.sample_completions("Hi",
     #                                       None,
     #                                       0.5,
     #                                       123,
-    #                                       num_completions=2)
+    #                                       num_completions=1)
     # assert completions == completions2
-    # logprobs = llm.get_multiple_choice_logprobs(
+    # logprobs, metadata = llm.get_multiple_choice_logprobs(
     #     "Fill in the blank with the appropriate homophone: The ____ of the king lasted for ten years.",  # pylint: disable=line-too-long
     #     choices=["rein", "reign", "rain"],
     #     seed=0,
     # )
+    # assert metadata["completion_tokens"] == 2
+    # assert metadata["prompt_tokens"] == 62
     # assert logprobs["reign"] > logprobs["rein"]
     # assert logprobs["reign"] > logprobs["rain"]
 

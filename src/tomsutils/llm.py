@@ -213,10 +213,13 @@ class LargeLanguageModel(PretrainedLargeModel):
         prompt: str,
         temperature: float,
         seed: int,
-        num_completions: int = 1,
-    ) -> tuple[list[str], dict[str, Any]]:
-        """Short-hand that doesn't include images."""
-        return self.sample_completions(prompt, None, temperature, seed, num_completions)
+    ) -> tuple[str, dict[str, Any]]:
+        """Short-hand that assumes 1 completoin and doesn't include images."""
+        responses, metadata = self.sample_completions(prompt, None, temperature, seed)[
+            0
+        ]
+        assert len(responses) == 1
+        return responses[0], metadata
 
 
 class OpenAIModel:
@@ -247,7 +250,7 @@ class OpenAIModel:
         max_tokens: int = 32,
         temperature: float = 0.2,
         verbose: bool = False,
-    ) -> str:
+    ) -> tuple[str, dict[str, Any]]:
         """Make an API call to OpenAI."""
         client = openai.OpenAI()
         completion = client.chat.completions.create(
@@ -260,8 +263,10 @@ class OpenAIModel:
         if verbose:
             logging.debug(f"OpenAI API response: {completion}")
         assert len(completion.choices) == 1
+        assert completion.usage is not None
+        metadata = completion.usage.to_dict()
         assert completion.choices[0].message.content is not None
-        return completion.choices[0].message.content
+        return completion.choices[0].message.content, metadata
 
 
 class GoogleGeminiModel:
@@ -310,18 +315,15 @@ class OpenAILLM(LargeLanguageModel, OpenAIModel):
     ) -> tuple[list[str], dict[str, Any]]:
         assert imgs is None
         messages = [{"role": "user", "content": prompt, "type": "text"}]
-        responses = [
-            self.call_openai_api(
-                messages,
-                model=self._model_name,
-                seed=seed,
-                max_tokens=self._max_tokens,
-                temperature=temperature,
-            )
-            for _ in range(num_completions)
-        ]
-        metadata: dict[str, Any] = {}  # TODO
-        return responses, metadata
+        assert num_completions == 1, "TODO"
+        response, metadata = self.call_openai_api(
+            messages,
+            model=self._model_name,
+            seed=seed,
+            max_tokens=self._max_tokens,
+            temperature=temperature,
+        )
+        return [response], metadata
 
     def get_multiple_choice_logprobs(
         self, prompt: str, choices: list[str], seed: int
@@ -343,6 +345,7 @@ Choices:
             seed=seed,
         )
         cache_filepath = cache_dir / "multiple_choice.json"
+        cache_metadata_filepath = cache_dir / "metadata.json"
 
         if not cache_filepath.exists():
             logging.debug(f"Querying model {self.get_id()} with new prompt.")
@@ -355,6 +358,8 @@ Choices:
                 logprobs=True,
                 top_logprobs=len(choices),
             )
+            assert completion.usage is not None
+            metadata = completion.usage.to_dict()
             logprobs = completion.choices[0].logprobs
             assert logprobs is not None
             assert logprobs.content is not None
@@ -374,9 +379,12 @@ Choices:
                     fp,
                 )
             logging.debug(f"Saved model response to {cache_filepath}.")
+            with open(cache_metadata_filepath, "w", encoding="utf-8") as fp:
+                json.dump(metadata, fp)
         with open(cache_filepath, "r", encoding="utf-8") as fp:
             choice_to_logprob = json.load(fp)["logprobs"]
-        metadata: dict[str, Any] = {}  # TODO
+        with open(cache_metadata_filepath, "r", encoding="utf-8") as fp:
+            metadata = json.load(fp)
         return choice_to_logprob, metadata
 
 
@@ -543,7 +551,7 @@ class OpenAIVLM(VisionLanguageModel, OpenAIModel):
                 model=self._model_name,
                 max_tokens=self._max_tokens,
                 temperature=temperature,
-            )
+            )[0]
             for _ in range(num_completions)
         ]
         metadata: dict[str, Any] = {}  # nothing saved for now
