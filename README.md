@@ -2,7 +2,8 @@
 
 ![workflow](https://github.com/tomsilver/toms-utils/actions/workflows/ci.yml/badge.svg)
 
-Miscellaneous Python utilities.
+:warning: [July 8, 2025] This repository is **deprecated**. Use third-party libraries for LLMs (e.g., [GPTCache](https://gptcache.readthedocs.io/)) and [prpl-utils](https://github.com/Princeton-Robot-Planning-and-Learning/prpl-utils) for everything else. :warning:
+
 
 ## Requirements
 
