@@ -2,7 +2,7 @@
 
 ![workflow](https://github.com/tomsilver/toms-utils/actions/workflows/ci.yml/badge.svg)
 
-:warning: [July 8, 2025] This repository is **deprecated**. Use third-party libraries for LLMs (e.g., [GPTCache](https://gptcache.readthedocs.io/)) and [prpl-utils](https://github.com/Princeton-Robot-Planning-and-Learning/prpl-utils) for everything else. :warning:
+:warning: [July 8, 2025] This repository is **deprecated**. Use [prpl-llm-utils](https://github.com/Princeton-Robot-Planning-and-Learning/prpl-llm-utils) for LLM utils and [prpl-utils](https://github.com/Princeton-Robot-Planning-and-Learning/prpl-utils) for everything else. :warning:
 
 
 ## Requirements
